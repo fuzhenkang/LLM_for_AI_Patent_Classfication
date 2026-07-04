@@ -85,6 +85,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default=None)
     parser.add_argument("--verbose", action="store_true", help="Print step and epoch training logs.")
+    parser.add_argument("--save-checkpoint-steps", type=int, default=0, help="Save checkpoint-last every N training steps. Use 0 to disable step checkpoints.")
+    parser.add_argument("--resume-from-checkpoint", default=None, help="Path to a checkpoint directory, for example outputs/llm/qwen_qlora/checkpoint-last.")
     args = parser.parse_args()
     return apply_model_defaults(args)
 
@@ -267,6 +269,82 @@ def save_best_model(args: argparse.Namespace, output_dir: Path, tokenizer, model
         json.dump(config, file, ensure_ascii=False, indent=2)
 
 
+def trainable_state_dict(model) -> dict[str, torch.Tensor]:
+    return {
+        name: param.detach().cpu()
+        for name, param in model.named_parameters()
+        if param.requires_grad
+    }
+
+
+def save_checkpoint(
+    args: argparse.Namespace,
+    checkpoint_dir: Path,
+    tokenizer,
+    model,
+    optimizer,
+    scheduler,
+    encoder,
+    epoch: int,
+    step: int,
+    global_step: int,
+    best_score: float,
+    best_metrics: dict[str, object],
+) -> None:
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    tokenizer.save_pretrained(checkpoint_dir / "tokenizer")
+    save_label_encoder(encoder, checkpoint_dir)
+    torch.save(trainable_state_dict(model), checkpoint_dir / "trainable_model_state.pt")
+    torch.save(optimizer.state_dict(), checkpoint_dir / "optimizer.pt")
+    torch.save(scheduler.state_dict(), checkpoint_dir / "scheduler.pt")
+    state = {
+        "epoch": epoch,
+        "step": step,
+        "global_step": global_step,
+        "best_score": best_score,
+        "best_metrics": best_metrics,
+    }
+    with (checkpoint_dir / "trainer_state.json").open("w", encoding="utf-8") as file:
+        json.dump(state, file, ensure_ascii=False, indent=2)
+    config = vars(args).copy()
+    config["checkpoint_type"] = "training_resume"
+    with (checkpoint_dir / "config.json").open("w", encoding="utf-8") as file:
+        json.dump(config, file, ensure_ascii=False, indent=2)
+
+
+def move_optimizer_state_to_device(optimizer, device: torch.device) -> None:
+    for state in optimizer.state.values():
+        for key, value in state.items():
+            if torch.is_tensor(value):
+                state[key] = value.to(device)
+
+
+def load_checkpoint(checkpoint_dir: str | Path, model, optimizer, scheduler, device: torch.device) -> dict[str, object]:
+    checkpoint_path = Path(checkpoint_dir)
+    state_path = checkpoint_path / "trainer_state.json"
+    model_state_path = checkpoint_path / "trainable_model_state.pt"
+    optimizer_path = checkpoint_path / "optimizer.pt"
+    scheduler_path = checkpoint_path / "scheduler.pt"
+    required = [state_path, model_state_path, optimizer_path, scheduler_path]
+    missing = [str(path) for path in required if not path.exists()]
+    if missing:
+        raise FileNotFoundError(f"Missing checkpoint files: {', '.join(missing)}")
+
+    model_state = torch.load(model_state_path, map_location="cpu")
+    model.load_state_dict(model_state, strict=False)
+    optimizer.load_state_dict(torch.load(optimizer_path, map_location="cpu"))
+    move_optimizer_state_to_device(optimizer, device)
+    scheduler.load_state_dict(torch.load(scheduler_path, map_location="cpu"))
+    with state_path.open("r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+def next_checkpoint_position(epoch: int, step: int, steps_per_epoch: int) -> tuple[int, int]:
+    if step >= steps_per_epoch:
+        return epoch + 1, 1
+    return epoch, step + 1
+
+
 def train(args: argparse.Namespace) -> dict[str, object]:
     set_seed(args.seed)
     output_dir = Path(args.output_dir)
@@ -313,10 +391,26 @@ def train(args: argparse.Namespace) -> dict[str, object]:
 
     best_score = -1.0
     best_metrics: dict[str, object] = {}
-    for epoch in range(1, args.epochs + 1):
+    start_epoch = 1
+    start_step = 1
+    global_step = 0
+    if args.resume_from_checkpoint:
+        checkpoint_state = load_checkpoint(args.resume_from_checkpoint, model, optimizer, scheduler, device)
+        start_epoch = int(checkpoint_state.get("epoch", 1))
+        start_step = int(checkpoint_state.get("step", 1))
+        global_step = int(checkpoint_state.get("global_step", 0))
+        best_score = float(checkpoint_state.get("best_score", -1.0))
+        best_metrics = dict(checkpoint_state.get("best_metrics", {}))
+        if args.verbose:
+            print(f"resumed from {args.resume_from_checkpoint}: epoch={start_epoch} step={start_step} global_step={global_step}", flush=True)
+
+    checkpoint_last = output_dir / "checkpoint-last"
+    for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         losses: list[float] = []
         for step, batch in enumerate(train_loader, start=1):
+            if epoch == start_epoch and step < start_step:
+                continue
             labels = batch["labels"].to(device)
             model_batch = {key: value.to(device) for key, value in batch.items()}
             logits = last_token_logits(model, model_batch, label_token_ids)
@@ -325,9 +419,26 @@ def train(args: argparse.Namespace) -> dict[str, object]:
             optimizer.step()
             scheduler.step()
             optimizer.zero_grad()
+            global_step += 1
             losses.append(float(loss.item()))
             if args.verbose and (step % 20 == 0 or step == len(train_loader)):
                 print(f"epoch={epoch} step={step}/{len(train_loader)} train_loss={sum(losses) / len(losses):.4f}", flush=True)
+            if args.save_checkpoint_steps > 0 and global_step % args.save_checkpoint_steps == 0:
+                next_epoch, next_step = next_checkpoint_position(epoch, step, len(train_loader))
+                save_checkpoint(
+                    args,
+                    checkpoint_last,
+                    tokenizer,
+                    model,
+                    optimizer,
+                    scheduler,
+                    encoder,
+                    next_epoch,
+                    next_step,
+                    global_step,
+                    best_score,
+                    best_metrics,
+                )
 
         metrics = evaluate(model, valid_loader, device, label_words, label_token_ids)
         metrics["train_loss"] = float(sum(losses) / max(len(losses), 1))
@@ -341,6 +452,20 @@ def train(args: argparse.Namespace) -> dict[str, object]:
             best_score = score
             best_metrics = metrics
             save_best_model(args, output_dir, tokenizer, model, encoder, label_words, label_token_ids, metrics)
+        save_checkpoint(
+            args,
+            checkpoint_last,
+            tokenizer,
+            model,
+            optimizer,
+            scheduler,
+            encoder,
+            epoch + 1,
+            1,
+            global_step,
+            best_score,
+            best_metrics,
+        )
 
     write_metrics(best_metrics, output_dir / "best_valid_metrics.json")
     return best_metrics

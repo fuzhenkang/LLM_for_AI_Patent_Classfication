@@ -31,6 +31,8 @@ CN110000002A,一种机械连接装置,本发明涉及机械零件连接结构,F1
 
 训练过程默认不在控制台逐轮打印日志；每个 epoch 的验证指标会保存为 `valid_metrics_epoch_*.json`。如果需要查看 step 和 epoch 日志，可以添加 `--verbose`。
 
+支持断点续训。训练时添加 `--save-checkpoint-steps 100` 会每 100 个 step 更新一次 `checkpoint-last`；如果训练中断，下次用 `--resume-from-checkpoint outputs\llm\qwen_qlora\checkpoint-last` 即可继续训练。
+
 ## 支持模型
 
 通过 `--model-key` 支持：
@@ -100,7 +102,29 @@ python llm_classifier.py `
   --batch-size 2 `
   --max-len 256 `
   --epochs 3 `
-  --lr 0.00002
+  --lr 0.00002 `
+  --save-checkpoint-steps 100
+```
+
+中断后继续训练：
+
+```powershell
+python llm_classifier.py `
+  --model-key qwen `
+  --base-model Qwen/Qwen2.5-7B-Instruct `
+  --train-csv data\split\train.csv `
+  --valid-csv data\split\valid.csv `
+  --output-dir outputs\llm\qwen_qlora `
+  --text-cols title,abstract,IPC `
+  --label-col label `
+  --tuning-mode qlora `
+  --load-in-4bit `
+  --batch-size 2 `
+  --max-len 256 `
+  --epochs 3 `
+  --lr 0.00002 `
+  --save-checkpoint-steps 100 `
+  --resume-from-checkpoint outputs\llm\qwen_qlora\checkpoint-last
 ```
 
 ## 3. 验证集 Optuna 寻优
