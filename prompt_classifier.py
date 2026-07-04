@@ -13,9 +13,9 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from Models.common import classification_metrics, fit_label_encoder, get_device, save_label_encoder, set_seed, write_metrics  # noqa: E402
-from PromptClassification.prompt_registry import MODEL_CONFIGS, get_prompt_model_config  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from prompt_common import classification_metrics, fit_label_encoder, get_device, save_label_encoder, set_seed, write_metrics  # noqa: E402
+from prompt_registry import MODEL_CONFIGS, get_prompt_model_config  # noqa: E402
 
 
 PROMPT_TEMPLATE = "请判断以下专利是否属于人工智能专利。只回答“{label_words}”中的一个。\n专利文本：{text}\n答案："

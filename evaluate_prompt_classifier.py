@@ -12,9 +12,9 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from Models.common import classification_metrics, load_label_encoder, write_metrics  # noqa: E402
-from PromptClassification.prompt_classifier import PromptClassificationDataset, last_token_logits  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from prompt_common import classification_metrics, load_label_encoder, write_metrics  # noqa: E402
+from prompt_classifier import PromptClassificationDataset, last_token_logits  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

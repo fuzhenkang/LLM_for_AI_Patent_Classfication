@@ -11,9 +11,9 @@ from pathlib import Path
 import optuna
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from PromptClassification.prompt_classifier import apply_model_defaults, train  # noqa: E402
-from PromptClassification.prompt_registry import MODEL_CONFIGS  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from prompt_classifier import apply_model_defaults, train  # noqa: E402
+from prompt_registry import MODEL_CONFIGS  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

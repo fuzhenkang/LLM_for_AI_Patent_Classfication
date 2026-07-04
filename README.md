@@ -2,6 +2,12 @@
 
 该目录提供独立的 Prompt + 预测下一个 token 文本分类流程，不使用交叉验证。
 
+安装依赖：
+
+```powershell
+pip install -r requirements.txt
+```
+
 流程为：
 
 1. 将数据集划分为训练集、验证集和测试集。
