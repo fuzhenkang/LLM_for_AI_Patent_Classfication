@@ -1,0 +1,329 @@
+"""Prompt-based next-token classification with LoRA, QLoRA, rsLoRA, DoRA, or head-only tuning."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import pandas as pd
+import torch
+from torch import nn
+from torch.utils.data import DataLoader, Dataset
+from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from Models.common import classification_metrics, fit_label_encoder, get_device, save_label_encoder, set_seed, write_metrics  # noqa: E402
+from PromptClassification.prompt_registry import MODEL_CONFIGS, get_prompt_model_config  # noqa: E402
+
+
+PROMPT_TEMPLATE = "请判断以下专利是否属于人工智能专利。只回答“{label_words}”中的一个。\n专利文本：{text}\n答案："
+
+
+class PromptClassificationDataset(Dataset):
+    def __init__(self, texts, labels, tokenizer, max_len: int, prompt_template: str, label_words: list[str]):
+        self.texts = list(texts)
+        self.labels = list(labels)
+        self.tokenizer = tokenizer
+        self.max_len = max_len
+        self.prompt_template = prompt_template
+        self.label_words = label_words
+
+    def __len__(self) -> int:
+        return len(self.labels)
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        prompt = self.prompt_template.format(text=self.texts[idx], label_words="/".join(self.label_words))
+        encoded = self.tokenizer(
+            prompt,
+            truncation=True,
+            padding="max_length",
+            max_length=self.max_len,
+            return_tensors="pt",
+        )
+        item = {key: value.squeeze(0) for key, value in encoded.items()}
+        item["labels"] = torch.tensor(self.labels[idx], dtype=torch.long)
+        return item
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train prompt-based next-token LLM classifier.")
+    parser.add_argument("--model-key", default="qwen", choices=sorted(MODEL_CONFIGS))
+    parser.add_argument("--base-model", default=None)
+    parser.add_argument("--train-csv", required=True)
+    parser.add_argument("--valid-csv", required=True)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--text-col", default="text")
+    parser.add_argument("--label-col", default="label")
+    parser.add_argument("--encoding", default="utf-8-sig")
+    parser.add_argument("--prompt-template", default=PROMPT_TEMPLATE)
+    parser.add_argument("--label-words", default="否,是", help="Comma-separated verbalizer words ordered by encoded label class.")
+    parser.add_argument("--max-len", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--warmup-ratio", type=float, default=0.1)
+    parser.add_argument("--tuning-mode", default="qlora", choices=["lora", "qlora", "rslora", "dora", "head_only"])
+    parser.add_argument("--lora-r", type=int, default=8)
+    parser.add_argument("--lora-alpha", type=int, default=16)
+    parser.add_argument("--lora-dropout", type=float, default=0.1)
+    parser.add_argument("--lora-target-modules", default=None)
+    parser.add_argument("--load-in-4bit", action="store_true")
+    parser.add_argument("--load-in-8bit", action="store_true")
+    parser.add_argument("--bnb-4bit-quant-type", default="nf4", choices=["nf4", "fp4"])
+    parser.add_argument("--bnb-4bit-compute-dtype", default="float16", choices=["float16", "bfloat16", "float32"])
+    parser.add_argument("--bnb-4bit-use-double-quant", action="store_true")
+    parser.add_argument("--trust-remote-code", action="store_true")
+    parser.add_argument("--torch-dtype", default=None, choices=["auto", "float16", "bfloat16", "float32"])
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--device", default=None)
+    args = parser.parse_args()
+    return apply_model_defaults(args)
+
+
+def apply_model_defaults(args: argparse.Namespace) -> argparse.Namespace:
+    config = get_prompt_model_config(args.model_key)
+    if args.base_model is None:
+        args.base_model = config.base_model
+    if args.lora_target_modules is None:
+        args.lora_target_modules = config.lora_target_modules
+    if args.max_len is None:
+        args.max_len = config.max_len
+    if args.batch_size is None:
+        args.batch_size = config.batch_size
+    if args.lr is None:
+        args.lr = config.lr
+    if args.torch_dtype is None:
+        args.torch_dtype = config.torch_dtype
+    args.trust_remote_code = bool(args.trust_remote_code or config.trust_remote_code)
+    if args.tuning_mode == "qlora" and not args.load_in_8bit:
+        args.load_in_4bit = True
+    return args
+
+
+def parse_target_modules(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def dtype_from_name(name: str):
+    return {"float16": torch.float16, "bfloat16": torch.bfloat16, "float32": torch.float32}[name]
+
+
+def build_tokenizer(args: argparse.Namespace):
+    tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=args.trust_remote_code)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"
+    return tokenizer
+
+
+def build_label_token_ids(tokenizer, label_words: list[str]) -> list[int]:
+    token_ids: list[int] = []
+    for word in label_words:
+        encoded = tokenizer.encode(word, add_special_tokens=False)
+        if not encoded:
+            raise ValueError(f"Label word cannot be tokenized: {word}")
+        token_ids.append(int(encoded[0]))
+    return token_ids
+
+
+def build_model(args: argparse.Namespace, tokenizer):
+    if args.load_in_4bit and args.load_in_8bit:
+        raise ValueError("Use only one of --load-in-4bit or --load-in-8bit.")
+
+    model_kwargs = {"trust_remote_code": args.trust_remote_code}
+    if args.torch_dtype != "auto":
+        model_kwargs["torch_dtype"] = dtype_from_name(args.torch_dtype)
+
+    if args.load_in_4bit or args.load_in_8bit:
+        from transformers import BitsAndBytesConfig
+
+        if args.load_in_4bit:
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type=args.bnb_4bit_quant_type,
+                bnb_4bit_compute_dtype=dtype_from_name(args.bnb_4bit_compute_dtype),
+                bnb_4bit_use_double_quant=args.bnb_4bit_use_double_quant,
+            )
+        else:
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+        model_kwargs["device_map"] = "auto"
+
+    model = AutoModelForCausalLM.from_pretrained(args.base_model, **model_kwargs)
+    if getattr(model.config, "pad_token_id", None) is None:
+        model.config.pad_token_id = tokenizer.pad_token_id
+    if model.get_input_embeddings().weight.shape[0] != len(tokenizer):
+        model.resize_token_embeddings(len(tokenizer))
+
+    if args.tuning_mode == "head_only":
+        for param in model.parameters():
+            param.requires_grad = False
+        for name, param in model.named_parameters():
+            if "lm_head" in name or "embed_out" in name or "output_layer" in name:
+                param.requires_grad = True
+        trainable = sum(param.numel() for param in model.parameters() if param.requires_grad)
+        if trainable == 0:
+            raise ValueError("No output head parameters were found for head_only tuning.")
+        print(f"trainable head params: {trainable}")
+        return model
+
+    from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
+
+    if args.load_in_4bit or args.load_in_8bit:
+        model = prepare_model_for_kbit_training(model)
+
+    lora_kwargs = {
+        "task_type": TaskType.CAUSAL_LM,
+        "r": args.lora_r,
+        "lora_alpha": args.lora_alpha,
+        "lora_dropout": args.lora_dropout,
+        "target_modules": parse_target_modules(args.lora_target_modules),
+        "bias": "none",
+    }
+    if args.tuning_mode == "rslora":
+        lora_kwargs["use_rslora"] = True
+    if args.tuning_mode == "dora":
+        lora_kwargs["use_dora"] = True
+    model = get_peft_model(model, LoraConfig(**lora_kwargs))
+    model.print_trainable_parameters()
+    return model
+
+
+def last_token_logits(model, batch: dict[str, torch.Tensor], label_token_ids: list[int]) -> torch.Tensor:
+    labels = batch.pop("labels")
+    outputs = model(**batch)
+    attention_mask = batch["attention_mask"]
+    positions = torch.arange(attention_mask.size(1), device=attention_mask.device).unsqueeze(0)
+    last_indices = (attention_mask * positions).max(dim=1).values
+    batch_indices = torch.arange(outputs.logits.size(0), device=outputs.logits.device)
+    logits = outputs.logits[batch_indices, last_indices]
+    selected = logits[:, torch.tensor(label_token_ids, device=logits.device)]
+    batch["labels"] = labels
+    return selected
+
+
+def evaluate(model, loader: DataLoader, device: torch.device, label_words: list[str], label_token_ids: list[int]) -> dict[str, object]:
+    model.eval()
+    y_true: list[int] = []
+    y_pred: list[int] = []
+    loss_fn = nn.CrossEntropyLoss()
+    losses: list[float] = []
+    with torch.no_grad():
+        for batch in loader:
+            labels = batch["labels"].to(device)
+            model_batch = {key: value.to(device) for key, value in batch.items()}
+            logits = last_token_logits(model, model_batch, label_token_ids)
+            loss = loss_fn(logits, labels)
+            losses.append(float(loss.item()))
+            y_true.extend(labels.cpu().numpy().tolist())
+            y_pred.extend(torch.argmax(logits, dim=1).cpu().numpy().tolist())
+    metrics = classification_metrics(y_true, y_pred, label_words)
+    metrics["loss"] = float(sum(losses) / max(len(losses), 1))
+    return metrics
+
+
+def save_best_model(args: argparse.Namespace, output_dir: Path, tokenizer, model, encoder, label_words: list[str], label_token_ids: list[int], metrics: dict[str, object]) -> None:
+    tokenizer.save_pretrained(output_dir / "tokenizer")
+    if args.tuning_mode == "head_only":
+        model.save_pretrained(output_dir / "model")
+    else:
+        model.save_pretrained(output_dir / "adapter")
+    save_label_encoder(encoder, output_dir)
+    config = vars(args).copy()
+    config.update(
+        {
+            "model_type": "prompt_next_token_classifier",
+            "label_words": label_words,
+            "label_token_ids": label_token_ids,
+            "best_valid_metrics": metrics,
+        }
+    )
+    with (output_dir / "config.json").open("w", encoding="utf-8") as file:
+        json.dump(config, file, ensure_ascii=False, indent=2)
+
+
+def train(args: argparse.Namespace) -> dict[str, object]:
+    set_seed(args.seed)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    train_df = pd.read_csv(args.train_csv, encoding=args.encoding)
+    valid_df = pd.read_csv(args.valid_csv, encoding=args.encoding)
+    encoder = fit_label_encoder(train_df[args.label_col], valid_df[args.label_col])
+    y_train = encoder.transform(train_df[args.label_col])
+    y_valid = encoder.transform(valid_df[args.label_col])
+    label_words = [item.strip() for item in args.label_words.split(",") if item.strip()]
+    if len(label_words) != len(encoder.classes_):
+        raise ValueError(f"--label-words has {len(label_words)} words, but data has {len(encoder.classes_)} classes.")
+
+    device = get_device(args.device)
+    tokenizer = build_tokenizer(args)
+    label_token_ids = build_label_token_ids(tokenizer, label_words)
+    model = build_model(args, tokenizer)
+    if not (args.load_in_4bit or args.load_in_8bit):
+        model.to(device)
+
+    train_loader = DataLoader(
+        PromptClassificationDataset(train_df[args.text_col], y_train, tokenizer, args.max_len, args.prompt_template, label_words),
+        batch_size=args.batch_size,
+        shuffle=True,
+    )
+    valid_loader = DataLoader(
+        PromptClassificationDataset(valid_df[args.text_col], y_valid, tokenizer, args.max_len, args.prompt_template, label_words),
+        batch_size=args.batch_size,
+        shuffle=False,
+    )
+
+    optimizer = torch.optim.AdamW((param for param in model.parameters() if param.requires_grad), lr=args.lr, weight_decay=args.weight_decay)
+    total_steps = max(len(train_loader) * args.epochs, 1)
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=int(total_steps * args.warmup_ratio),
+        num_training_steps=total_steps,
+    )
+    loss_fn = nn.CrossEntropyLoss()
+
+    best_score = -1.0
+    best_metrics: dict[str, object] = {}
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        losses: list[float] = []
+        for step, batch in enumerate(train_loader, start=1):
+            labels = batch["labels"].to(device)
+            model_batch = {key: value.to(device) for key, value in batch.items()}
+            logits = last_token_logits(model, model_batch, label_token_ids)
+            loss = loss_fn(logits, labels)
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad()
+            losses.append(float(loss.item()))
+            if step % 20 == 0 or step == len(train_loader):
+                print(f"epoch={epoch} step={step}/{len(train_loader)} train_loss={sum(losses) / len(losses):.4f}", flush=True)
+
+        metrics = evaluate(model, valid_loader, device, label_words, label_token_ids)
+        metrics["train_loss"] = float(sum(losses) / max(len(losses), 1))
+        metrics["epoch"] = epoch
+        write_metrics(metrics, output_dir / f"valid_metrics_epoch_{epoch}.json")
+        print(f"epoch={epoch} valid_loss={metrics['loss']:.4f} f1_macro={metrics['f1_macro']:.4f}", flush=True)
+
+        score = float(metrics.get("f1_macro", 0.0))
+        if score > best_score:
+            best_score = score
+            best_metrics = metrics
+            save_best_model(args, output_dir, tokenizer, model, encoder, label_words, label_token_ids, metrics)
+
+    write_metrics(best_metrics, output_dir / "best_valid_metrics.json")
+    return best_metrics
+
+
+def main() -> int:
+    metrics = train(parse_args())
+    print(json.dumps(metrics, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
