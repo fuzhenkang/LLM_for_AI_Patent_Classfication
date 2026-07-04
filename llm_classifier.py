@@ -1,4 +1,4 @@
-"""Prompt-based next-token classification with LoRA, QLoRA, rsLoRA, DoRA, or head-only tuning."""
+"""LLM next-token classification with LoRA, QLoRA, rsLoRA, DoRA, or head-only tuning."""
 
 from __future__ import annotations
 
@@ -14,29 +14,29 @@ from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from prompt_common import classification_metrics, fit_label_encoder, get_device, save_label_encoder, set_seed, write_metrics  # noqa: E402
-from prompt_registry import MODEL_CONFIGS, get_prompt_model_config  # noqa: E402
+from common import classification_metrics, fit_label_encoder, get_device, save_label_encoder, set_seed, write_metrics  # noqa: E402
+from llm_registry import MODEL_CONFIGS, get_llm_model_config  # noqa: E402
 
 
-PROMPT_TEMPLATE = "请判断以下专利是否属于人工智能专利。只回答“{label_words}”中的一个。\n专利文本：{text}\n答案："
+DEFAULT_TEMPLATE = "请判断以下专利是否属于人工智能专利。只回答“{label_words}”中的一个。\n专利文本：{text}\n答案："
 
 
-class PromptClassificationDataset(Dataset):
-    def __init__(self, texts, labels, tokenizer, max_len: int, prompt_template: str, label_words: list[str]):
+class LLMClassificationDataset(Dataset):
+    def __init__(self, texts, labels, tokenizer, max_len: int, template: str, label_words: list[str]):
         self.texts = list(texts)
         self.labels = list(labels)
         self.tokenizer = tokenizer
         self.max_len = max_len
-        self.prompt_template = prompt_template
+        self.template = template
         self.label_words = label_words
 
     def __len__(self) -> int:
         return len(self.labels)
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        prompt = self.prompt_template.format(text=self.texts[idx], label_words="/".join(self.label_words))
+        text = self.template.format(text=self.texts[idx], label_words="/".join(self.label_words))
         encoded = self.tokenizer(
-            prompt,
+            text,
             truncation=True,
             padding="max_length",
             max_length=self.max_len,
@@ -48,7 +48,7 @@ class PromptClassificationDataset(Dataset):
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train prompt-based next-token LLM classifier.")
+    parser = argparse.ArgumentParser(description="Train an LLM next-token classifier.")
     parser.add_argument("--model-key", default="qwen", choices=sorted(MODEL_CONFIGS))
     parser.add_argument("--base-model", default=None)
     parser.add_argument("--train-csv", required=True)
@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--text-col", default="text")
     parser.add_argument("--label-col", default="label")
     parser.add_argument("--encoding", default="utf-8-sig")
-    parser.add_argument("--prompt-template", default=PROMPT_TEMPLATE)
+    parser.add_argument("--template", default=DEFAULT_TEMPLATE)
     parser.add_argument("--label-words", default="否,是", help="Comma-separated verbalizer words ordered by encoded label class.")
     parser.add_argument("--max-len", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
@@ -84,7 +84,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def apply_model_defaults(args: argparse.Namespace) -> argparse.Namespace:
-    config = get_prompt_model_config(args.model_key)
+    config = get_llm_model_config(args.model_key)
     if args.base_model is None:
         args.base_model = config.base_model
     if args.lora_target_modules is None:
@@ -234,7 +234,7 @@ def save_best_model(args: argparse.Namespace, output_dir: Path, tokenizer, model
     config = vars(args).copy()
     config.update(
         {
-            "model_type": "prompt_next_token_classifier",
+            "model_type": "llm_next_token_classifier",
             "label_words": label_words,
             "label_token_ids": label_token_ids,
             "best_valid_metrics": metrics,
@@ -266,12 +266,12 @@ def train(args: argparse.Namespace) -> dict[str, object]:
         model.to(device)
 
     train_loader = DataLoader(
-        PromptClassificationDataset(train_df[args.text_col], y_train, tokenizer, args.max_len, args.prompt_template, label_words),
+        LLMClassificationDataset(train_df[args.text_col], y_train, tokenizer, args.max_len, args.template, label_words),
         batch_size=args.batch_size,
         shuffle=True,
     )
     valid_loader = DataLoader(
-        PromptClassificationDataset(valid_df[args.text_col], y_valid, tokenizer, args.max_len, args.prompt_template, label_words),
+        LLMClassificationDataset(valid_df[args.text_col], y_valid, tokenizer, args.max_len, args.template, label_words),
         batch_size=args.batch_size,
         shuffle=False,
     )

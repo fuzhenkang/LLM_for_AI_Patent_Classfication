@@ -1,4 +1,4 @@
-"""Optuna search for prompt-based next-token classification without cross-validation."""
+"""Optuna search for LLM next-token classification without cross-validation."""
 
 from __future__ import annotations
 
@@ -12,12 +12,12 @@ import optuna
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from prompt_classifier import apply_model_defaults, train  # noqa: E402
-from prompt_registry import MODEL_CONFIGS  # noqa: E402
+from llm_classifier import apply_model_defaults, train  # noqa: E402
+from llm_registry import MODEL_CONFIGS  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Tune prompt classifier hyperparameters on a validation set.")
+    parser = argparse.ArgumentParser(description="Tune LLM classifier hyperparameters on a validation set.")
     parser.add_argument("--model-key", default="qwen", choices=sorted(MODEL_CONFIGS))
     parser.add_argument("--base-model", default=None)
     parser.add_argument("--train-csv", required=True)
@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--text-col", default="text")
     parser.add_argument("--label-col", default="label")
     parser.add_argument("--encoding", default="utf-8-sig")
-    parser.add_argument("--prompt-template", default="请判断以下专利是否属于人工智能专利。只回答“{label_words}”中的一个。\n专利文本：{text}\n答案：")
+    parser.add_argument("--template", default="请判断以下专利是否属于人工智能专利。只回答“{label_words}”中的一个。\n专利文本：{text}\n答案：")
     parser.add_argument("--label-words", default="否,是")
     parser.add_argument("--tuning-mode", default="qlora", choices=["lora", "qlora", "rslora", "dora", "head_only"])
     parser.add_argument("--lora-target-modules", default=None)

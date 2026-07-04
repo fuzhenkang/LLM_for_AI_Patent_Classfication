@@ -1,6 +1,6 @@
-# Prompt next-token 大语言模型分类
+# LLM next-token 大语言模型分类
 
-该目录提供独立的 Prompt + 预测下一个 token 文本分类流程，不使用交叉验证。
+该项目提供独立的大语言模型指令模板 + 预测下一个 token 文本分类流程，不使用交叉验证。
 
 安装依赖：
 
@@ -15,7 +15,7 @@ pip install -r requirements.txt
 3. 根据验证集效果选择最佳 checkpoint 或进行 Optuna 参数寻优。
 4. 最后只在测试集上评估最终模型。
 
-模型使用 `AutoModelForCausalLM`，输入 Prompt 后取最后一个位置的 logits，并只比较标签词 token，例如默认 `否,是`。损失函数为分类常用的 `CrossEntropyLoss`。
+模型使用 `AutoModelForCausalLM`，输入指令模板后取最后一个位置的 logits，并只比较标签词 token，例如默认 `否,是`。损失函数为分类常用的 `CrossEntropyLoss`。
 
 ## 支持模型
 
@@ -50,14 +50,14 @@ dora       # DoRA
 head_only  # 冻结主干，只训练输出头参数
 ```
 
-在 Prompt next-token 范式中，`head_only` 表示只调整语言模型输出层对标签词的打分。
+在 next-token 分类范式中，`head_only` 表示只调整语言模型输出层对标签词的打分。
 
 ## 1. 划分数据集
 
 ```powershell
 python split_dataset.py `
   --input data\processed\patents_cleaned.csv `
-  --output-dir data\prompt_split `
+  --output-dir data\split `
   --label-col label `
   --train-ratio 0.8 `
   --valid-ratio 0.1 `
@@ -65,15 +65,15 @@ python split_dataset.py `
   --seed 42
 ```
 
-## 2. 训练 QLoRA Prompt 分类模型
+## 2. 训练 QLoRA 大语言模型分类器
 
 ```powershell
-python prompt_classifier.py `
+python llm_classifier.py `
   --model-key qwen `
   --base-model Qwen/Qwen2.5-7B-Instruct `
-  --train-csv data\prompt_split\train.csv `
-  --valid-csv data\prompt_split\valid.csv `
-  --output-dir outputs\prompt_llm\qwen_qlora `
+  --train-csv data\split\train.csv `
+  --valid-csv data\split\valid.csv `
+  --output-dir outputs\llm\qwen_qlora `
   --text-col text `
   --label-col label `
   --tuning-mode qlora `
@@ -92,12 +92,12 @@ python prompt_classifier.py `
 ## 3. 验证集 Optuna 寻优
 
 ```powershell
-python optuna_prompt_search.py `
+python optuna_search.py `
   --model-key qwen `
   --base-model Qwen/Qwen2.5-7B-Instruct `
-  --train-csv data\prompt_split\train.csv `
-  --valid-csv data\prompt_split\valid.csv `
-  --output-dir outputs\prompt_optuna\qwen_qlora `
+  --train-csv data\split\train.csv `
+  --valid-csv data\split\valid.csv `
+  --output-dir outputs\optuna\qwen_qlora `
   --text-col text `
   --label-col label `
   --tuning-mode qlora `
@@ -111,10 +111,10 @@ python optuna_prompt_search.py `
 ## 4. 测试集评估
 
 ```powershell
-python evaluate_prompt_classifier.py `
-  --model-dir outputs\prompt_llm\qwen_qlora `
-  --test-csv data\prompt_split\test.csv `
-  --output-dir outputs\prompt_llm_eval\qwen_qlora `
+python evaluate_model.py `
+  --model-dir outputs\llm\qwen_qlora `
+  --test-csv data\split\test.csv `
+  --output-dir outputs\evaluation\qwen_qlora `
   --text-col text `
   --label-col label
 ```
@@ -122,6 +122,6 @@ python evaluate_prompt_classifier.py `
 输出：
 
 ```text
-outputs/prompt_llm_eval/qwen_qlora/test_metrics.json
-outputs/prompt_llm_eval/qwen_qlora/predictions.csv
+outputs/evaluation/qwen_qlora/test_metrics.json
+outputs/evaluation/qwen_qlora/predictions.csv
 ```

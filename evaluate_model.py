@@ -1,4 +1,4 @@
-"""Evaluate a prompt-based next-token classifier on a held-out test set."""
+"""Evaluate an LLM next-token classifier on a held-out test set."""
 
 from __future__ import annotations
 
@@ -13,12 +13,12 @@ from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from prompt_common import classification_metrics, load_label_encoder, write_metrics  # noqa: E402
-from prompt_classifier import PromptClassificationDataset, last_token_logits  # noqa: E402
+from common import classification_metrics, load_label_encoder, write_metrics  # noqa: E402
+from llm_classifier import LLMClassificationDataset, last_token_logits  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate prompt-based next-token classifier.")
+    parser = argparse.ArgumentParser(description="Evaluate an LLM next-token classifier.")
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--test-csv", required=True)
     parser.add_argument("--output-dir", required=True)
@@ -94,7 +94,7 @@ def main() -> int:
     batch_size = args.batch_size or int(config.get("batch_size", 1))
 
     loader = DataLoader(
-        PromptClassificationDataset(test_df[args.text_col], labels, tokenizer, int(config["max_len"]), str(config["prompt_template"]), label_words),
+        LLMClassificationDataset(test_df[args.text_col], labels, tokenizer, int(config["max_len"]), str(config["template"]), label_words),
         batch_size=batch_size,
         shuffle=False,
     )
