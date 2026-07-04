@@ -84,6 +84,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--torch-dtype", default=None, choices=["auto", "float16", "bfloat16", "float32"])
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default=None)
+    parser.add_argument("--verbose", action="store_true", help="Print step and epoch training logs.")
     args = parser.parse_args()
     return apply_model_defaults(args)
 
@@ -186,7 +187,8 @@ def build_model(args: argparse.Namespace, tokenizer):
         trainable = sum(param.numel() for param in model.parameters() if param.requires_grad)
         if trainable == 0:
             raise ValueError("No output head parameters were found for head_only tuning.")
-        print(f"trainable head params: {trainable}")
+        if args.verbose:
+            print(f"trainable head params: {trainable}")
         return model
 
     from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
@@ -207,7 +209,8 @@ def build_model(args: argparse.Namespace, tokenizer):
     if args.tuning_mode == "dora":
         lora_kwargs["use_dora"] = True
     model = get_peft_model(model, LoraConfig(**lora_kwargs))
-    model.print_trainable_parameters()
+    if args.verbose:
+        model.print_trainable_parameters()
     return model
 
 
@@ -323,14 +326,15 @@ def train(args: argparse.Namespace) -> dict[str, object]:
             scheduler.step()
             optimizer.zero_grad()
             losses.append(float(loss.item()))
-            if step % 20 == 0 or step == len(train_loader):
+            if args.verbose and (step % 20 == 0 or step == len(train_loader)):
                 print(f"epoch={epoch} step={step}/{len(train_loader)} train_loss={sum(losses) / len(losses):.4f}", flush=True)
 
         metrics = evaluate(model, valid_loader, device, label_words, label_token_ids)
         metrics["train_loss"] = float(sum(losses) / max(len(losses), 1))
         metrics["epoch"] = epoch
         write_metrics(metrics, output_dir / f"valid_metrics_epoch_{epoch}.json")
-        print(f"epoch={epoch} valid_loss={metrics['loss']:.4f} f1_macro={metrics['f1_macro']:.4f}", flush=True)
+        if args.verbose:
+            print(f"epoch={epoch} valid_loss={metrics['loss']:.4f} f1_macro={metrics['f1_macro']:.4f}", flush=True)
 
         score = float(metrics.get("f1_macro", 0.0))
         if score > best_score:

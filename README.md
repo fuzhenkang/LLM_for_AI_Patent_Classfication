@@ -29,6 +29,8 @@ CN110000002A,一种机械连接装置,本发明涉及机械零件连接结构,F1
 
 训练时可以用 `--text-cols title,abstract,IPC` 将标题、摘要和 IPC 拼接为模型输入。若已经提前清洗并拼接好了 `text` 字段，也可以继续使用 `--text-col text`。
 
+训练过程默认不在控制台逐轮打印日志；每个 epoch 的验证指标会保存为 `valid_metrics_epoch_*.json`。如果需要查看 step 和 epoch 日志，可以添加 `--verbose`。
+
 ## 支持模型
 
 通过 `--model-key` 支持：
