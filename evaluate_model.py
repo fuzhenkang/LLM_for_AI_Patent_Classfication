@@ -22,7 +22,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--test-csv", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--text-col", default="text")
+    parser.add_argument("--text-col", default=None, help="Single input text column. Defaults to training config.")
+    parser.add_argument("--text-cols", default=None, help="Comma-separated input columns. Defaults to training config.")
     parser.add_argument("--label-col", default="label")
     parser.add_argument("--encoding", default="utf-8-sig")
     parser.add_argument("--batch-size", type=int, default=None)
@@ -73,6 +74,25 @@ def get_device(name: str | None) -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def parse_text_columns(args: argparse.Namespace, config: dict[str, object]) -> list[str]:
+    if args.text_cols:
+        return [column.strip() for column in args.text_cols.split(",") if column.strip()]
+    if args.text_col:
+        return [args.text_col]
+    if config.get("text_cols"):
+        return [column.strip() for column in str(config["text_cols"]).split(",") if column.strip()]
+    return [str(config.get("text_col", "text"))]
+
+
+def build_input_texts(df: pd.DataFrame, columns: list[str]) -> pd.Series:
+    missing = [column for column in columns if column not in df.columns]
+    if missing:
+        raise ValueError(f"Missing text columns: {', '.join(missing)}")
+    if len(columns) == 1:
+        return df[columns[0]].fillna("").astype(str)
+    return df[columns].fillna("").astype(str).agg(" ".join, axis=1)
+
+
 def main() -> int:
     args = parse_args()
     model_dir = Path(args.model_dir)
@@ -88,13 +108,15 @@ def main() -> int:
 
     encoder = load_label_encoder(model_dir)
     test_df = pd.read_csv(args.test_csv, encoding=args.encoding)
+    text_columns = parse_text_columns(args, config)
+    test_texts = build_input_texts(test_df, text_columns)
     labels = encoder.transform(test_df[args.label_col])
     label_words = list(config["label_words"])
     label_token_ids = [int(item) for item in config["label_token_ids"]]
     batch_size = args.batch_size or int(config.get("batch_size", 1))
 
     loader = DataLoader(
-        LLMClassificationDataset(test_df[args.text_col], labels, tokenizer, int(config["max_len"]), str(config["template"]), label_words),
+        LLMClassificationDataset(test_texts, labels, tokenizer, int(config["max_len"]), str(config["template"]), label_words),
         batch_size=batch_size,
         shuffle=False,
     )

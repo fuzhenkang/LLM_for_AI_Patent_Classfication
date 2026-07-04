@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--valid-csv", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--text-col", default="text")
+    parser.add_argument("--text-cols", default=None, help="Comma-separated input columns, for example: title,abstract,IPC.")
     parser.add_argument("--label-col", default="label")
     parser.add_argument("--encoding", default="utf-8-sig")
     parser.add_argument("--template", default="请判断以下专利是否属于人工智能专利。只回答“{label_words}”中的一个。\n专利文本：{text}\n答案：")

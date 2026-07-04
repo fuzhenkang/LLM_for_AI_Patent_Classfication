@@ -55,6 +55,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--valid-csv", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--text-col", default="text")
+    parser.add_argument(
+        "--text-cols",
+        default=None,
+        help="Comma-separated input columns to concatenate, for example: title,abstract,IPC. Overrides --text-col.",
+    )
     parser.add_argument("--label-col", default="label")
     parser.add_argument("--encoding", default="utf-8-sig")
     parser.add_argument("--template", default=DEFAULT_TEMPLATE)
@@ -101,6 +106,21 @@ def apply_model_defaults(args: argparse.Namespace) -> argparse.Namespace:
     if args.tuning_mode == "qlora" and not args.load_in_8bit:
         args.load_in_4bit = True
     return args
+
+
+def parse_text_columns(args: argparse.Namespace) -> list[str]:
+    if getattr(args, "text_cols", None):
+        return [column.strip() for column in args.text_cols.split(",") if column.strip()]
+    return [args.text_col]
+
+
+def build_input_texts(df: pd.DataFrame, columns: list[str]) -> pd.Series:
+    missing = [column for column in columns if column not in df.columns]
+    if missing:
+        raise ValueError(f"Missing text columns: {', '.join(missing)}")
+    if len(columns) == 1:
+        return df[columns[0]].fillna("").astype(str)
+    return df[columns].fillna("").astype(str).agg(" ".join, axis=1)
 
 
 def parse_target_modules(value: str) -> list[str]:
@@ -251,6 +271,9 @@ def train(args: argparse.Namespace) -> dict[str, object]:
 
     train_df = pd.read_csv(args.train_csv, encoding=args.encoding)
     valid_df = pd.read_csv(args.valid_csv, encoding=args.encoding)
+    text_columns = parse_text_columns(args)
+    train_texts = build_input_texts(train_df, text_columns)
+    valid_texts = build_input_texts(valid_df, text_columns)
     encoder = fit_label_encoder(train_df[args.label_col], valid_df[args.label_col])
     y_train = encoder.transform(train_df[args.label_col])
     y_valid = encoder.transform(valid_df[args.label_col])
@@ -266,12 +289,12 @@ def train(args: argparse.Namespace) -> dict[str, object]:
         model.to(device)
 
     train_loader = DataLoader(
-        LLMClassificationDataset(train_df[args.text_col], y_train, tokenizer, args.max_len, args.template, label_words),
+        LLMClassificationDataset(train_texts, y_train, tokenizer, args.max_len, args.template, label_words),
         batch_size=args.batch_size,
         shuffle=True,
     )
     valid_loader = DataLoader(
-        LLMClassificationDataset(valid_df[args.text_col], y_valid, tokenizer, args.max_len, args.template, label_words),
+        LLMClassificationDataset(valid_texts, y_valid, tokenizer, args.max_len, args.template, label_words),
         batch_size=args.batch_size,
         shuffle=False,
     )

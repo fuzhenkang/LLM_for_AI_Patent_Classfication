@@ -17,6 +17,18 @@ pip install -r requirements.txt
 
 模型使用 `AutoModelForCausalLM`，输入指令模板后取最后一个位置的 logits，并只比较标签词 token，例如默认 `否,是`。损失函数为分类常用的 `CrossEntropyLoss`。
 
+## 数据格式
+
+CSV 至少需要包含标签列和模型输入列。推荐字段如下：
+
+```csv
+PN,title,abstract,IPC,label
+CN110000001A,一种图像识别方法,本发明公开了一种基于神经网络的图像识别方法,G06N;G06V,1
+CN110000002A,一种机械连接装置,本发明涉及机械零件连接结构,F16B,0
+```
+
+训练时可以用 `--text-cols title,abstract,IPC` 将标题、摘要和 IPC 拼接为模型输入。若已经提前清洗并拼接好了 `text` 字段，也可以继续使用 `--text-col text`。
+
 ## 支持模型
 
 通过 `--model-key` 支持：
@@ -74,7 +86,7 @@ python llm_classifier.py `
   --train-csv data\split\train.csv `
   --valid-csv data\split\valid.csv `
   --output-dir outputs\llm\qwen_qlora `
-  --text-col text `
+  --text-cols title,abstract,IPC `
   --label-col label `
   --tuning-mode qlora `
   --load-in-4bit `
@@ -98,7 +110,7 @@ python optuna_search.py `
   --train-csv data\split\train.csv `
   --valid-csv data\split\valid.csv `
   --output-dir outputs\optuna\qwen_qlora `
-  --text-col text `
+  --text-cols title,abstract,IPC `
   --label-col label `
   --tuning-mode qlora `
   --load-in-4bit `
@@ -115,7 +127,7 @@ python evaluate_model.py `
   --model-dir outputs\llm\qwen_qlora `
   --test-csv data\split\test.csv `
   --output-dir outputs\evaluation\qwen_qlora `
-  --text-col text `
+  --text-cols title,abstract,IPC `
   --label-col label
 ```
 
