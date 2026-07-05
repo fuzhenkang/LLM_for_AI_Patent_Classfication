@@ -93,7 +93,7 @@ def load_model(model_dir: Path, config: dict[str, object], tokenizer):
     base_model = load_base_model(str(config["base_model"]), config, **build_quantized_kwargs(config))
     if getattr(base_model.config, "pad_token_id", None) is None:
         base_model.config.pad_token_id = tokenizer.pad_token_id
-    model = PeftModel.from_pretrained(base_model, model_dir / "adapter")
+    model = PeftModel.from_pretrained(base_model, str(model_dir / "adapter"))
     if "baichuan" in str(config.get("base_model", "")).lower():
         rebuild_baichuan_rotary_cache(model)
     return model
