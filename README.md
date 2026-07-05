@@ -70,6 +70,8 @@ head_only  # 冻结主干，只训练输出头参数
 
 Baichuan 的自定义模型代码可能不兼容 `BitsAndBytesConfig` 对象。本项目已对 `--model-key baichuan` 默认启用 legacy bitsandbytes 参数；如果其它模型也出现 `BitsAndBytesConfig object is not subscriptable`，可以手动添加 `--use-legacy-bnb-args`。
 
+Baichuan 在部分 `transformers`/`accelerate` 环境中使用 `device_map=auto` 会出现 `Cannot copy out of meta tensor; no data!`。本项目已对 `--model-key baichuan` 默认设置 `--device-map none`，如需手动覆盖可添加 `--device-map auto`。
+
 ## 1. 划分数据集
 
 ```powershell

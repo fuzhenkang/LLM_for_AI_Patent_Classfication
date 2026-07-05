@@ -60,7 +60,9 @@ def build_quantized_kwargs(config: dict[str, object]) -> dict[str, object]:
                 )
             else:
                 kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
-        kwargs["device_map"] = "auto"
+        device_map = str(config.get("device_map", "auto"))
+        if device_map != "none":
+            kwargs["device_map"] = device_map
     return kwargs
 
 

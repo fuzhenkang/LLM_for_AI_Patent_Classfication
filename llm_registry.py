@@ -17,6 +17,7 @@ class LLMModelConfig:
     torch_dtype: str = "auto"
     recommend_quantization: bool = False
     use_legacy_bnb_args: bool = False
+    device_map: str = "auto"
 
 
 MODEL_CONFIGS: dict[str, LLMModelConfig] = {
@@ -65,6 +66,7 @@ MODEL_CONFIGS: dict[str, LLMModelConfig] = {
         trust_remote_code=True,
         recommend_quantization=True,
         use_legacy_bnb_args=True,
+        device_map="none",
     ),
 }
 
