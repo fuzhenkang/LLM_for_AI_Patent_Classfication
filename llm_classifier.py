@@ -82,6 +82,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bnb-4bit-use-double-quant", action="store_true")
     parser.add_argument("--use-legacy-bnb-args", action="store_true", help="Use legacy load_in_4bit/load_in_8bit kwargs instead of BitsAndBytesConfig.")
     parser.add_argument("--device-map", default=None, choices=["auto", "none"], help="Device map used when loading quantized models. Baichuan defaults to none to avoid meta tensor rotary-cache errors.")
+    parser.add_argument("--model-loader", default=None, choices=["causal_lm", "mistral3_conditional"], help="Model class used for loading. Ministral/Mistral 3 is loaded with mistral3_conditional.")
     parser.add_argument("--trust-remote-code", action="store_true")
     parser.add_argument("--torch-dtype", default=None, choices=["auto", "float16", "bfloat16", "float32"])
     parser.add_argument("--seed", type=int, default=42)
@@ -109,6 +110,11 @@ def apply_model_defaults(args: argparse.Namespace) -> argparse.Namespace:
         args.torch_dtype = config.torch_dtype
     if args.device_map is None:
         args.device_map = config.device_map
+    if args.model_loader is None:
+        args.model_loader = config.model_loader
+    base_model_lower = str(args.base_model).lower()
+    if args.model_loader == "causal_lm" and ("ministral-3" in base_model_lower or "mistral-3" in base_model_lower):
+        args.model_loader = "mistral3_conditional"
     args.trust_remote_code = bool(args.trust_remote_code or config.trust_remote_code)
     args.use_legacy_bnb_args = bool(args.use_legacy_bnb_args or config.use_legacy_bnb_args)
     if args.tuning_mode == "qlora" and not args.load_in_8bit:
@@ -188,7 +194,18 @@ def build_model(args: argparse.Namespace, tokenizer):
         if args.device_map != "none":
             model_kwargs["device_map"] = args.device_map
 
-    model = AutoModelForCausalLM.from_pretrained(args.base_model, **model_kwargs)
+    if args.model_loader == "mistral3_conditional":
+        try:
+            from transformers import Mistral3ForConditionalGeneration
+        except ImportError as exc:
+            raise ImportError(
+                "This model needs Mistral3ForConditionalGeneration. Please upgrade transformers, "
+                "for example: pip install -U transformers accelerate mistral-common"
+            ) from exc
+
+        model = Mistral3ForConditionalGeneration.from_pretrained(args.base_model, **model_kwargs)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(args.base_model, **model_kwargs)
     if getattr(model.config, "pad_token_id", None) is None:
         model.config.pad_token_id = tokenizer.pad_token_id
     if model.get_input_embeddings().weight.shape[0] != len(tokenizer):

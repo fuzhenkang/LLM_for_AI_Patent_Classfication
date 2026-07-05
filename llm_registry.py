@@ -18,6 +18,7 @@ class LLMModelConfig:
     recommend_quantization: bool = False
     use_legacy_bnb_args: bool = False
     device_map: str = "auto"
+    model_loader: str = "causal_lm"
 
 
 MODEL_CONFIGS: dict[str, LLMModelConfig] = {

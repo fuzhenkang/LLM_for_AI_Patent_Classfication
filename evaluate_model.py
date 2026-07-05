@@ -66,13 +66,27 @@ def build_quantized_kwargs(config: dict[str, object]) -> dict[str, object]:
     return kwargs
 
 
+def load_base_model(base_model: str, config: dict[str, object], **kwargs):
+    if config.get("model_loader") == "mistral3_conditional":
+        try:
+            from transformers import Mistral3ForConditionalGeneration
+        except ImportError as exc:
+            raise ImportError(
+                "This model needs Mistral3ForConditionalGeneration. Please upgrade transformers, "
+                "for example: pip install -U transformers accelerate mistral-common"
+            ) from exc
+
+        return Mistral3ForConditionalGeneration.from_pretrained(base_model, **kwargs)
+    return AutoModelForCausalLM.from_pretrained(base_model, **kwargs)
+
+
 def load_model(model_dir: Path, config: dict[str, object], tokenizer):
     if config.get("tuning_mode") == "head_only":
-        return AutoModelForCausalLM.from_pretrained(model_dir / "model", trust_remote_code=bool(config.get("trust_remote_code", False)))
+        return load_base_model(str(model_dir / "model"), config, trust_remote_code=bool(config.get("trust_remote_code", False)))
 
     from peft import PeftModel
 
-    base_model = AutoModelForCausalLM.from_pretrained(str(config["base_model"]), **build_quantized_kwargs(config))
+    base_model = load_base_model(str(config["base_model"]), config, **build_quantized_kwargs(config))
     if getattr(base_model.config, "pad_token_id", None) is None:
         base_model.config.pad_token_id = tokenizer.pad_token_id
     return PeftModel.from_pretrained(base_model, model_dir / "adapter")
