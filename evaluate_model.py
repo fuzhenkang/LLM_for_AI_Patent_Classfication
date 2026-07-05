@@ -14,7 +14,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import classification_metrics, load_label_encoder, write_metrics  # noqa: E402
-from llm_classifier import LLMClassificationDataset, last_token_logits  # noqa: E402
+from llm_classifier import LLMClassificationDataset, last_token_logits, rebuild_baichuan_rotary_cache  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -93,7 +93,10 @@ def load_model(model_dir: Path, config: dict[str, object], tokenizer):
     base_model = load_base_model(str(config["base_model"]), config, **build_quantized_kwargs(config))
     if getattr(base_model.config, "pad_token_id", None) is None:
         base_model.config.pad_token_id = tokenizer.pad_token_id
-    return PeftModel.from_pretrained(base_model, model_dir / "adapter")
+    model = PeftModel.from_pretrained(base_model, model_dir / "adapter")
+    if "baichuan" in str(config.get("base_model", "")).lower():
+        rebuild_baichuan_rotary_cache(model)
+    return model
 
 
 def get_device(name: str | None) -> torch.device:

@@ -163,6 +163,41 @@ def build_label_token_ids(tokenizer, label_words: list[str]) -> list[int]:
     return token_ids
 
 
+def is_baichuan_model(args: argparse.Namespace) -> bool:
+    return args.model_key == "baichuan" or "baichuan" in str(args.base_model).lower()
+
+
+def first_real_tensor_device(model) -> torch.device:
+    for tensor in list(model.parameters()) + list(model.buffers()):
+        if not getattr(tensor, "is_meta", False):
+            return tensor.device
+    return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+
+def rebuild_baichuan_rotary_cache(model, device: torch.device | None = None) -> None:
+    if device is None:
+        device = first_real_tensor_device(model)
+    for module in model.modules():
+        if not all(hasattr(module, name) for name in ("cos_cached", "sin_cached", "max_seq_len_cached")):
+            continue
+        cos_cached = getattr(module, "cos_cached")
+        sin_cached = getattr(module, "sin_cached")
+        if not (getattr(cos_cached, "is_meta", False) or getattr(sin_cached, "is_meta", False)):
+            continue
+
+        seq_len = int(getattr(module, "max_seq_len_cached", 4096))
+        dim = int(cos_cached.shape[-1])
+        base = float(getattr(module, "base", 10000))
+        dtype = torch.float32
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, device=device, dtype=dtype) / dim))
+        positions = torch.arange(seq_len, device=device, dtype=dtype)
+        freqs = torch.einsum("i,j->ij", positions, inv_freq)
+        emb = torch.cat((freqs, freqs), dim=-1)
+        module.inv_freq = inv_freq
+        module.cos_cached = emb.cos()[None, None, :, :]
+        module.sin_cached = emb.sin()[None, None, :, :]
+
+
 def build_model(args: argparse.Namespace, tokenizer):
     if args.load_in_4bit and args.load_in_8bit:
         raise ValueError("Use only one of --load-in-4bit or --load-in-8bit.")
@@ -226,6 +261,8 @@ def build_model(args: argparse.Namespace, tokenizer):
             raise ValueError("No output head parameters were found for head_only tuning.")
         if args.verbose:
             print(f"trainable head params: {trainable}")
+        if is_baichuan_model(args):
+            rebuild_baichuan_rotary_cache(model)
         return model
 
     from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
@@ -246,6 +283,8 @@ def build_model(args: argparse.Namespace, tokenizer):
     if args.tuning_mode == "dora":
         lora_kwargs["use_dora"] = True
     model = get_peft_model(model, LoraConfig(**lora_kwargs))
+    if is_baichuan_model(args):
+        rebuild_baichuan_rotary_cache(model)
     if args.verbose:
         model.print_trainable_parameters()
     return model
