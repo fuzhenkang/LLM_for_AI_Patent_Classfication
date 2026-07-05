@@ -61,7 +61,11 @@ def build_quantized_kwargs(config: dict[str, object]) -> dict[str, object]:
             else:
                 kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
         device_map = str(config.get("device_map", "auto"))
-        if device_map != "none":
+        if device_map == "cuda":
+            kwargs["device_map"] = {"": 0}
+        elif device_map == "cpu":
+            kwargs["device_map"] = {"": "cpu"}
+        elif device_map != "none":
             kwargs["device_map"] = device_map
     return kwargs
 

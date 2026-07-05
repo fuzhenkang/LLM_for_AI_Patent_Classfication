@@ -70,7 +70,7 @@ head_only  # 冻结主干，只训练输出头参数
 
 Baichuan 的自定义模型代码可能不兼容 `BitsAndBytesConfig` 对象。本项目已对 `--model-key baichuan` 默认启用 legacy bitsandbytes 参数；如果其它模型也出现 `BitsAndBytesConfig object is not subscriptable`，可以手动添加 `--use-legacy-bnb-args`。
 
-Baichuan 在部分 `transformers`/`accelerate` 环境中使用 `device_map=auto` 会出现 `Cannot copy out of meta tensor; no data!`。本项目已对 `--model-key baichuan` 默认设置 `--device-map none`，如需手动覆盖可添加 `--device-map auto`。
+Baichuan 在部分 `transformers`/`accelerate` 环境中使用 `device_map=auto` 会出现 `Cannot copy out of meta tensor; no data!`，而完全不设置 device map 又可能造成 CPU/GPU 张量混放。本项目已对 `--model-key baichuan` 默认设置 `--device-map cuda`，将量化模型固定加载到第一张 GPU；如需手动覆盖可使用 `--device-map auto`、`--device-map cpu` 或 `--device-map none`。
 
 Ministral 3 / Mistral 3 不是普通 `AutoModelForCausalLM` 架构。本项目在 `--base-model` 包含 `Ministral-3` 或 `Mistral-3` 时会自动使用 `Mistral3ForConditionalGeneration`，也可以手动添加 `--model-loader mistral3_conditional`。如果环境缺少对应类，请先升级 `transformers` 并安装 `mistral-common`。
 
