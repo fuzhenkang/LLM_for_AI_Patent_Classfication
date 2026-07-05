@@ -84,16 +84,26 @@ def load_base_model(base_model: str, config: dict[str, object], **kwargs):
     return AutoModelForCausalLM.from_pretrained(base_model, **kwargs)
 
 
+def resolve_model_subdir(model_dir: Path, subdir: str) -> str:
+    path = (model_dir / subdir).resolve()
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing {subdir} directory: {path}. "
+            f"Please set --model-dir to the training output directory that contains config.json, tokenizer/, and {subdir}/."
+        )
+    return str(path)
+
+
 def load_model(model_dir: Path, config: dict[str, object], tokenizer):
     if config.get("tuning_mode") == "head_only":
-        return load_base_model(str(model_dir / "model"), config, trust_remote_code=bool(config.get("trust_remote_code", False)))
+        return load_base_model(resolve_model_subdir(model_dir, "model"), config, trust_remote_code=bool(config.get("trust_remote_code", False)))
 
     from peft import PeftModel
 
     base_model = load_base_model(str(config["base_model"]), config, **build_quantized_kwargs(config))
     if getattr(base_model.config, "pad_token_id", None) is None:
         base_model.config.pad_token_id = tokenizer.pad_token_id
-    model = PeftModel.from_pretrained(base_model, str(model_dir / "adapter"))
+    model = PeftModel.from_pretrained(base_model, resolve_model_subdir(model_dir, "adapter"))
     if "baichuan" in str(config.get("base_model", "")).lower():
         rebuild_baichuan_rotary_cache(model)
     return model
