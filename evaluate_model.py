@@ -41,17 +41,25 @@ def build_quantized_kwargs(config: dict[str, object]) -> dict[str, object]:
     if torch_dtype != "auto":
         kwargs["torch_dtype"] = dtype_from_name(torch_dtype)
     if config.get("load_in_4bit") or config.get("load_in_8bit"):
-        from transformers import BitsAndBytesConfig
-
-        if config.get("load_in_4bit"):
-            kwargs["quantization_config"] = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type=str(config.get("bnb_4bit_quant_type", "nf4")),
-                bnb_4bit_compute_dtype=dtype_from_name(str(config.get("bnb_4bit_compute_dtype", "float16"))),
-                bnb_4bit_use_double_quant=bool(config.get("bnb_4bit_use_double_quant", False)),
-            )
+        if config.get("use_legacy_bnb_args"):
+            kwargs["load_in_4bit"] = bool(config.get("load_in_4bit"))
+            kwargs["load_in_8bit"] = bool(config.get("load_in_8bit"))
+            if config.get("load_in_4bit"):
+                kwargs["bnb_4bit_quant_type"] = str(config.get("bnb_4bit_quant_type", "nf4"))
+                kwargs["bnb_4bit_compute_dtype"] = dtype_from_name(str(config.get("bnb_4bit_compute_dtype", "float16")))
+                kwargs["bnb_4bit_use_double_quant"] = bool(config.get("bnb_4bit_use_double_quant", False))
         else:
-            kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+            from transformers import BitsAndBytesConfig
+
+            if config.get("load_in_4bit"):
+                kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type=str(config.get("bnb_4bit_quant_type", "nf4")),
+                    bnb_4bit_compute_dtype=dtype_from_name(str(config.get("bnb_4bit_compute_dtype", "float16"))),
+                    bnb_4bit_use_double_quant=bool(config.get("bnb_4bit_use_double_quant", False)),
+                )
+            else:
+                kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
         kwargs["device_map"] = "auto"
     return kwargs
 

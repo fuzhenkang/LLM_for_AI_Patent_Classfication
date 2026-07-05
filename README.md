@@ -68,6 +68,8 @@ head_only  # 冻结主干，只训练输出头参数
 
 在 next-token 分类范式中，`head_only` 表示只调整语言模型输出层对标签词的打分。
 
+Baichuan 的自定义模型代码可能不兼容 `BitsAndBytesConfig` 对象。本项目已对 `--model-key baichuan` 默认启用 legacy bitsandbytes 参数；如果其它模型也出现 `BitsAndBytesConfig object is not subscriptable`，可以手动添加 `--use-legacy-bnb-args`。
+
 ## 1. 划分数据集
 
 ```powershell

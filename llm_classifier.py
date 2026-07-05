@@ -80,6 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bnb-4bit-quant-type", default="nf4", choices=["nf4", "fp4"])
     parser.add_argument("--bnb-4bit-compute-dtype", default="float16", choices=["float16", "bfloat16", "float32"])
     parser.add_argument("--bnb-4bit-use-double-quant", action="store_true")
+    parser.add_argument("--use-legacy-bnb-args", action="store_true", help="Use legacy load_in_4bit/load_in_8bit kwargs instead of BitsAndBytesConfig.")
     parser.add_argument("--trust-remote-code", action="store_true")
     parser.add_argument("--torch-dtype", default=None, choices=["auto", "float16", "bfloat16", "float32"])
     parser.add_argument("--seed", type=int, default=42)
@@ -106,6 +107,7 @@ def apply_model_defaults(args: argparse.Namespace) -> argparse.Namespace:
     if args.torch_dtype is None:
         args.torch_dtype = config.torch_dtype
     args.trust_remote_code = bool(args.trust_remote_code or config.trust_remote_code)
+    args.use_legacy_bnb_args = bool(args.use_legacy_bnb_args or config.use_legacy_bnb_args)
     if args.tuning_mode == "qlora" and not args.load_in_8bit:
         args.load_in_4bit = True
     return args
@@ -161,17 +163,25 @@ def build_model(args: argparse.Namespace, tokenizer):
         model_kwargs["torch_dtype"] = dtype_from_name(args.torch_dtype)
 
     if args.load_in_4bit or args.load_in_8bit:
-        from transformers import BitsAndBytesConfig
-
-        if args.load_in_4bit:
-            model_kwargs["quantization_config"] = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type=args.bnb_4bit_quant_type,
-                bnb_4bit_compute_dtype=dtype_from_name(args.bnb_4bit_compute_dtype),
-                bnb_4bit_use_double_quant=args.bnb_4bit_use_double_quant,
-            )
+        if args.use_legacy_bnb_args:
+            model_kwargs["load_in_4bit"] = bool(args.load_in_4bit)
+            model_kwargs["load_in_8bit"] = bool(args.load_in_8bit)
+            if args.load_in_4bit:
+                model_kwargs["bnb_4bit_quant_type"] = args.bnb_4bit_quant_type
+                model_kwargs["bnb_4bit_compute_dtype"] = dtype_from_name(args.bnb_4bit_compute_dtype)
+                model_kwargs["bnb_4bit_use_double_quant"] = args.bnb_4bit_use_double_quant
         else:
-            model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+            from transformers import BitsAndBytesConfig
+
+            if args.load_in_4bit:
+                model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type=args.bnb_4bit_quant_type,
+                    bnb_4bit_compute_dtype=dtype_from_name(args.bnb_4bit_compute_dtype),
+                    bnb_4bit_use_double_quant=args.bnb_4bit_use_double_quant,
+                )
+            else:
+                model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
         model_kwargs["device_map"] = "auto"
 
     model = AutoModelForCausalLM.from_pretrained(args.base_model, **model_kwargs)
