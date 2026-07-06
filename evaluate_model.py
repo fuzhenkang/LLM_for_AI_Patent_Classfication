@@ -94,9 +94,32 @@ def resolve_model_subdir(model_dir: Path, subdir: str) -> str:
     return str(path)
 
 
-def align_model_vocab_to_tokenizer(model, tokenizer) -> None:
-    if model.get_input_embeddings().weight.shape[0] != len(tokenizer):
-        model.resize_token_embeddings(len(tokenizer))
+def adapter_vocab_size(adapter_dir: str) -> int | None:
+    adapter_path = Path(adapter_dir)
+    safetensors_path = adapter_path / "adapter_model.safetensors"
+    bin_path = adapter_path / "adapter_model.bin"
+    candidate_suffixes = ("embed_tokens.weight", "lm_head.weight")
+
+    if safetensors_path.exists():
+        from safetensors import safe_open
+
+        with safe_open(safetensors_path, framework="pt", device="cpu") as file:
+            for key in file.keys():
+                if key.endswith(candidate_suffixes):
+                    return int(file.get_tensor(key).shape[0])
+
+    if bin_path.exists():
+        state_dict = torch.load(bin_path, map_location="cpu")
+        for key, value in state_dict.items():
+            if key.endswith(candidate_suffixes):
+                return int(value.shape[0])
+    return None
+
+
+def align_model_vocab(model, tokenizer, adapter_dir: str) -> None:
+    target_size = adapter_vocab_size(adapter_dir) or len(tokenizer)
+    if model.get_input_embeddings().weight.shape[0] != target_size:
+        model.resize_token_embeddings(target_size)
 
 
 def load_model(model_dir: Path, config: dict[str, object], tokenizer):
@@ -108,8 +131,9 @@ def load_model(model_dir: Path, config: dict[str, object], tokenizer):
     base_model = load_base_model(str(config["base_model"]), config, **build_quantized_kwargs(config))
     if getattr(base_model.config, "pad_token_id", None) is None:
         base_model.config.pad_token_id = tokenizer.pad_token_id
-    align_model_vocab_to_tokenizer(base_model, tokenizer)
-    model = PeftModel.from_pretrained(base_model, resolve_model_subdir(model_dir, "adapter"))
+    adapter_dir = resolve_model_subdir(model_dir, "adapter")
+    align_model_vocab(base_model, tokenizer, adapter_dir)
+    model = PeftModel.from_pretrained(base_model, adapter_dir)
     if "baichuan" in str(config.get("base_model", "")).lower():
         rebuild_baichuan_rotary_cache(model)
     return model
