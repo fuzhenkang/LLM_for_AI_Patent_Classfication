@@ -94,6 +94,11 @@ def resolve_model_subdir(model_dir: Path, subdir: str) -> str:
     return str(path)
 
 
+def align_model_vocab_to_tokenizer(model, tokenizer) -> None:
+    if model.get_input_embeddings().weight.shape[0] != len(tokenizer):
+        model.resize_token_embeddings(len(tokenizer))
+
+
 def load_model(model_dir: Path, config: dict[str, object], tokenizer):
     if config.get("tuning_mode") == "head_only":
         return load_base_model(resolve_model_subdir(model_dir, "model"), config, trust_remote_code=bool(config.get("trust_remote_code", False)))
@@ -103,6 +108,7 @@ def load_model(model_dir: Path, config: dict[str, object], tokenizer):
     base_model = load_base_model(str(config["base_model"]), config, **build_quantized_kwargs(config))
     if getattr(base_model.config, "pad_token_id", None) is None:
         base_model.config.pad_token_id = tokenizer.pad_token_id
+    align_model_vocab_to_tokenizer(base_model, tokenizer)
     model = PeftModel.from_pretrained(base_model, resolve_model_subdir(model_dir, "adapter"))
     if "baichuan" in str(config.get("base_model", "")).lower():
         rebuild_baichuan_rotary_cache(model)
