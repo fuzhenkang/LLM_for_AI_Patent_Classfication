@@ -38,6 +38,15 @@ MODEL_CONFIGS: dict[str, LLMModelConfig] = {
         batch_size=2,
         lr=2e-5,
     ),
+    "deepseek": LLMModelConfig(
+        model_key="deepseek",
+        base_model="deepseek-ai/deepseek-llm-7b-base",
+        lora_target_modules="q_proj,v_proj",
+        max_len=256,
+        batch_size=1,
+        lr=2e-5,
+        recommend_quantization=True,
+    ),
     "glm": LLMModelConfig(
         model_key="glm",
         base_model="THUDM/glm-4-9b-chat",

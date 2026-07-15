@@ -51,6 +51,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--trust-remote-code", action="store_true")
     parser.add_argument("--torch-dtype", default=None, choices=["auto", "float16", "bfloat16", "float32"])
     parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--gradient-steps", type=int, default=1)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--warmup-ratio", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)

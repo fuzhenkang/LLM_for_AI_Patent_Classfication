@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -57,6 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--encoding", default="utf-8-sig")
     parser.add_argument("--max-len", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--gradient-steps", type=int, default=1, help="Number of batches to accumulate before one optimizer update.")
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--weight-decay", type=float, default=0.01)
@@ -99,6 +101,8 @@ def apply_model_defaults(args: argparse.Namespace) -> argparse.Namespace:
     args.trust_remote_code = bool(args.trust_remote_code or config.trust_remote_code)
     if args.tuning_mode == "qlora" and not args.load_in_8bit:
         args.load_in_4bit = True
+    if args.gradient_steps < 1:
+        raise ValueError("--gradient-steps must be >= 1.")
     return args
 
 
@@ -340,7 +344,8 @@ def train_once(args: argparse.Namespace, train_df: pd.DataFrame, valid_df: pd.Da
     if not (args.load_in_4bit or args.load_in_8bit):
         model.to(device)
     optimizer = torch.optim.AdamW((param for param in model.parameters() if param.requires_grad), lr=args.lr, weight_decay=args.weight_decay)
-    total_steps = max(1, len(train_loader) * args.epochs)
+    updates_per_epoch = max(1, math.ceil(len(train_loader) / args.gradient_steps))
+    total_steps = max(1, updates_per_epoch * args.epochs)
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
         num_warmup_steps=int(total_steps * args.warmup_ratio),
@@ -366,20 +371,24 @@ def train_once(args: argparse.Namespace, train_df: pd.DataFrame, valid_df: pd.Da
     for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         train_losses: list[float] = []
+        optimizer.zero_grad()
         for step, batch in enumerate(train_loader, start=1):
             if epoch == start_epoch and step < start_step:
                 continue
             model_batch = {key: value.to(device) for key, value in batch.items()}
-            optimizer.zero_grad()
             loss = model(**model_batch).loss
-            loss.backward()
-            optimizer.step()
-            scheduler.step()
-            global_step += 1
             train_losses.append(float(loss.item()))
+            loss = loss / args.gradient_steps
+            loss.backward()
+            should_update = step % args.gradient_steps == 0 or step == len(train_loader)
+            if should_update:
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
+                global_step += 1
             if args.verbose and (step % 20 == 0 or step == len(train_loader)):
                 print(f"epoch={epoch} step={step}/{len(train_loader)} train_loss={sum(train_losses) / len(train_losses):.4f}", flush=True)
-            if args.save_checkpoint_steps > 0 and global_step % args.save_checkpoint_steps == 0:
+            if should_update and args.save_checkpoint_steps > 0 and global_step % args.save_checkpoint_steps == 0:
                 next_epoch, next_step = next_checkpoint_position(epoch, step, len(train_loader))
                 save_checkpoint(
                     args,

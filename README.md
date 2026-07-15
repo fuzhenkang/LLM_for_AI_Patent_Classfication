@@ -78,6 +78,7 @@ Prompt + 文本 -> LLM -> 下一 token logits -> 标签词得分 -> 交叉熵损
 ```text
 llama
 qwen
+deepseek
 glm
 mistral
 baichuan
@@ -88,6 +89,7 @@ baichuan
 ```text
 Qwen/Qwen3-8B
 Qwen/Qwen2.5-7B-Instruct
+deepseek-ai/deepseek-llm-7b-base
 mistralai/Mistral-7B-v0.1
 baichuan-inc/Baichuan2-7B-Base
 THUDM/glm-4-9b-chat
@@ -145,6 +147,7 @@ python LLM_AIPC_v1/llm_classifier.py \
   --lora-alpha 32 \
   --lora-dropout 0.05 \
   --batch-size 2 \
+  --gradient-steps 4 \
   --max-len 256 \
   --epochs 3 \
   --lr 0.00002 \
@@ -165,6 +168,7 @@ python LLM_AIPC_v1/llm_classifier.py \
   --tuning-mode qlora \
   --load-in-4bit \
   --batch-size 2 \
+  --gradient-steps 4 \
   --max-len 256 \
   --epochs 3 \
   --lr 0.00002 \
@@ -192,6 +196,7 @@ python LLM_AIPC_v2/llm_classifier.py \
   --lora-alpha 32 \
   --lora-dropout 0.05 \
   --batch-size 2 \
+  --gradient-steps 4 \
   --max-len 256 \
   --epochs 3 \
   --lr 0.00002 \
@@ -213,6 +218,7 @@ python LLM_AIPC_v2/llm_classifier.py \
   --tuning-mode qlora \
   --load-in-4bit \
   --batch-size 2 \
+  --gradient-steps 4 \
   --max-len 256 \
   --epochs 3 \
   --lr 0.00002 \
@@ -268,6 +274,14 @@ best_model/
 ```
 
 `best_model/` 是验证集指标最优 trial 的模型目录，可直接用于测试集评估。
+
+`--gradient-steps` 表示梯度累积步数。有效 batch size 的计算方式为：
+
+```text
+有效 batch size = batch-size × gradient-steps
+```
+
+例如 `--batch-size 2 --gradient-steps 4` 等效于每 8 条样本更新一次参数，但单次显存占用仍接近 `batch-size 2`。
 
 ## 9. 测试集评估
 
