@@ -139,6 +139,11 @@ def dtype_from_name(name: str):
     return {"float16": torch.float16, "bfloat16": torch.bfloat16, "float32": torch.float32}[name]
 
 
+def patch_tied_weights_keys(model) -> None:
+    if not hasattr(model, "all_tied_weights_keys") and hasattr(model, "_tied_weights_keys"):
+        model.all_tied_weights_keys = model._tied_weights_keys
+
+
 def build_model(args: argparse.Namespace, label_names: list[str]):
     id2label = {idx: str(label) for idx, label in enumerate(label_names)}
     label2id = {str(label): idx for idx, label in enumerate(label_names)}
@@ -167,6 +172,7 @@ def build_model(args: argparse.Namespace, label_names: list[str]):
         model_kwargs["device_map"] = "auto"
 
     model = AutoModelForSequenceClassification.from_pretrained(args.base_model, **model_kwargs)
+    patch_tied_weights_keys(model)
     if getattr(model.config, "pad_token_id", None) is None and getattr(model.config, "eos_token_id", None) is not None:
         model.config.pad_token_id = model.config.eos_token_id
 

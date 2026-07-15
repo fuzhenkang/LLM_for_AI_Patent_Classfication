@@ -152,6 +152,11 @@ def dtype_from_name(name: str):
     return {"float16": torch.float16, "bfloat16": torch.bfloat16, "float32": torch.float32}[name]
 
 
+def patch_tied_weights_keys(model) -> None:
+    if not hasattr(model, "all_tied_weights_keys") and hasattr(model, "_tied_weights_keys"):
+        model.all_tied_weights_keys = model._tied_weights_keys
+
+
 def build_tokenizer(args: argparse.Namespace):
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=args.trust_remote_code)
     if tokenizer.pad_token is None:
@@ -252,6 +257,7 @@ def build_model(args: argparse.Namespace, tokenizer):
         model = Mistral3ForConditionalGeneration.from_pretrained(args.base_model, **model_kwargs)
     else:
         model = AutoModelForCausalLM.from_pretrained(args.base_model, **model_kwargs)
+    patch_tied_weights_keys(model)
     if getattr(model.config, "pad_token_id", None) is None:
         model.config.pad_token_id = tokenizer.pad_token_id
     if model.get_input_embeddings().weight.shape[0] != len(tokenizer):
