@@ -1,4 +1,4 @@
-"""Evaluate an LLM next-token classifier on a held-out test set."""
+"""Evaluate LLM_AIPC_v1 or LLM_AIPC_v2 models on a held-out test set."""
 
 from __future__ import annotations
 
@@ -10,15 +10,17 @@ from pathlib import Path
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import classification_metrics, load_label_encoder, write_metrics  # noqa: E402
+from LLM_AIPC_v1.llm_classifier import SequenceClassificationDataset  # noqa: E402
+from LLM_AIPC_v1.llm_classifier import dtype_from_name as dtype_from_name_v1  # noqa: E402
 from LLM_AIPC_v2.llm_classifier import LLMClassificationDataset, last_token_logits, rebuild_baichuan_rotary_cache  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate an LLM next-token classifier.")
+    parser = argparse.ArgumentParser(description="Evaluate an LLM patent classifier.")
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--test-csv", required=True)
     parser.add_argument("--output-dir", required=True)
@@ -35,18 +37,18 @@ def dtype_from_name(name: str):
     return {"float16": torch.float16, "bfloat16": torch.bfloat16, "float32": torch.float32}[name]
 
 
-def build_quantized_kwargs(config: dict[str, object]) -> dict[str, object]:
+def build_quantized_kwargs(config: dict[str, object], dtype_fn=dtype_from_name) -> dict[str, object]:
     kwargs: dict[str, object] = {"trust_remote_code": bool(config.get("trust_remote_code", False))}
     torch_dtype = str(config.get("torch_dtype", "auto"))
     if torch_dtype != "auto":
-        kwargs["torch_dtype"] = dtype_from_name(torch_dtype)
+        kwargs["torch_dtype"] = dtype_fn(torch_dtype)
     if config.get("load_in_4bit") or config.get("load_in_8bit"):
         if config.get("use_legacy_bnb_args"):
             kwargs["load_in_4bit"] = bool(config.get("load_in_4bit"))
             kwargs["load_in_8bit"] = bool(config.get("load_in_8bit"))
             if config.get("load_in_4bit"):
                 kwargs["bnb_4bit_quant_type"] = str(config.get("bnb_4bit_quant_type", "nf4"))
-                kwargs["bnb_4bit_compute_dtype"] = dtype_from_name(str(config.get("bnb_4bit_compute_dtype", "float16")))
+                kwargs["bnb_4bit_compute_dtype"] = dtype_fn(str(config.get("bnb_4bit_compute_dtype", "float16")))
                 kwargs["bnb_4bit_use_double_quant"] = bool(config.get("bnb_4bit_use_double_quant", False))
         else:
             from transformers import BitsAndBytesConfig
@@ -55,7 +57,7 @@ def build_quantized_kwargs(config: dict[str, object]) -> dict[str, object]:
                 kwargs["quantization_config"] = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_quant_type=str(config.get("bnb_4bit_quant_type", "nf4")),
-                    bnb_4bit_compute_dtype=dtype_from_name(str(config.get("bnb_4bit_compute_dtype", "float16"))),
+                    bnb_4bit_compute_dtype=dtype_fn(str(config.get("bnb_4bit_compute_dtype", "float16"))),
                     bnb_4bit_use_double_quant=bool(config.get("bnb_4bit_use_double_quant", False)),
                 )
             else:
@@ -70,7 +72,7 @@ def build_quantized_kwargs(config: dict[str, object]) -> dict[str, object]:
     return kwargs
 
 
-def load_base_model(base_model: str, config: dict[str, object], **kwargs):
+def load_v2_base_model(base_model: str, config: dict[str, object], **kwargs):
     if config.get("model_loader") == "mistral3_conditional":
         try:
             from transformers import Mistral3ForConditionalGeneration
@@ -122,13 +124,13 @@ def align_model_vocab(model, tokenizer, adapter_dir: str) -> None:
         model.resize_token_embeddings(target_size)
 
 
-def load_model(model_dir: Path, config: dict[str, object], tokenizer):
+def load_v2_model(model_dir: Path, config: dict[str, object], tokenizer):
     if config.get("tuning_mode") == "head_only":
-        return load_base_model(resolve_model_subdir(model_dir, "model"), config, trust_remote_code=bool(config.get("trust_remote_code", False)))
+        return load_v2_base_model(resolve_model_subdir(model_dir, "model"), config, trust_remote_code=bool(config.get("trust_remote_code", False)))
 
     from peft import PeftModel
 
-    base_model = load_base_model(str(config["base_model"]), config, **build_quantized_kwargs(config))
+    base_model = load_v2_base_model(str(config["base_model"]), config, **build_quantized_kwargs(config))
     if getattr(base_model.config, "pad_token_id", None) is None:
         base_model.config.pad_token_id = tokenizer.pad_token_id
     adapter_dir = resolve_model_subdir(model_dir, "adapter")
@@ -137,6 +139,33 @@ def load_model(model_dir: Path, config: dict[str, object], tokenizer):
     if "baichuan" in str(config.get("base_model", "")).lower():
         rebuild_baichuan_rotary_cache(model)
     return model
+
+
+def load_v1_model(model_dir: Path, config: dict[str, object], label_names: list[str], tokenizer):
+    id2label = {idx: label for idx, label in enumerate(label_names)}
+    label2id = {label: idx for idx, label in enumerate(label_names)}
+    model = AutoModelForSequenceClassification.from_pretrained(
+        str(config["base_model"]),
+        num_labels=len(label_names),
+        id2label=id2label,
+        label2id=label2id,
+        **build_quantized_kwargs(config, dtype_from_name_v1),
+    )
+    if getattr(model.config, "pad_token_id", None) is None:
+        model.config.pad_token_id = tokenizer.pad_token_id
+    if config.get("tuning_mode") == "head_only":
+        state_path = model_dir / "head_state.pt"
+        if not state_path.exists():
+            raise FileNotFoundError(f"Missing head-only state file: {state_path}")
+        model.load_state_dict(torch.load(state_path, map_location="cpu"), strict=False)
+        return model
+
+    from peft import PeftModel
+
+    adapter_dir = model_dir / "adapter"
+    if not adapter_dir.exists():
+        raise FileNotFoundError(f"Missing adapter directory: {adapter_dir}")
+    return PeftModel.from_pretrained(model, str(adapter_dir.resolve()))
 
 
 def get_device(name: str | None) -> torch.device:
@@ -164,36 +193,53 @@ def build_input_texts(df: pd.DataFrame, columns: list[str]) -> pd.Series:
     return df[columns].fillna("").astype(str).agg(" ".join, axis=1)
 
 
-def main() -> int:
-    args = parse_args()
-    model_dir = Path(args.model_dir)
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+def write_predictions(test_df: pd.DataFrame, y_true: list[int], y_pred: list[int], label_names: list[str], output_dir: Path, encoding: str) -> None:
+    predictions = test_df.copy()
+    predictions["true_label"] = [label_names[idx] for idx in y_true]
+    predictions["pred_label"] = [label_names[idx] for idx in y_pred]
+    predictions.to_csv(output_dir / "predictions.csv", index=False, encoding=encoding)
 
-    with (model_dir / "config.json").open("r", encoding="utf-8") as file:
-        config = json.load(file)
-    tokenizer = AutoTokenizer.from_pretrained(model_dir / "tokenizer", trust_remote_code=bool(config.get("trust_remote_code", False)))
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.padding_side = "left"
 
-    encoder = load_label_encoder(model_dir)
-    test_df = pd.read_csv(args.test_csv, encoding=args.encoding)
-    text_columns = parse_text_columns(args, config)
-    test_texts = build_input_texts(test_df, text_columns)
+def evaluate_v1(args: argparse.Namespace, model_dir: Path, config: dict[str, object], tokenizer, encoder, test_df: pd.DataFrame, texts: pd.Series) -> dict[str, object]:
+    label_names = [str(label) for label in encoder.classes_]
     labels = encoder.transform(test_df[args.label_col])
+    batch_size = args.batch_size or int(config.get("batch_size", 1))
+    loader = DataLoader(SequenceClassificationDataset(texts, labels, tokenizer, int(config["max_len"])), batch_size=batch_size)
+
+    device = get_device(args.device)
+    model = load_v1_model(model_dir, config, label_names, tokenizer)
+    if not (config.get("load_in_4bit") or config.get("load_in_8bit")):
+        model.to(device)
+    model.eval()
+
+    y_true: list[int] = []
+    y_pred: list[int] = []
+    with torch.no_grad():
+        for batch in loader:
+            labels_tensor = batch["labels"].to(device)
+            model_batch = {key: value.to(device) for key, value in batch.items()}
+            logits = model(**model_batch).logits
+            y_true.extend(labels_tensor.cpu().numpy().tolist())
+            y_pred.extend(torch.argmax(logits, dim=1).cpu().numpy().tolist())
+
+    metrics = classification_metrics(y_true, y_pred, label_names)
+    write_predictions(test_df, y_true, y_pred, label_names, Path(args.output_dir), args.encoding)
+    return metrics
+
+
+def evaluate_v2(args: argparse.Namespace, model_dir: Path, config: dict[str, object], tokenizer, encoder, test_df: pd.DataFrame, texts: pd.Series) -> dict[str, object]:
     label_words = list(config["label_words"])
     label_token_ids = [int(item) for item in config["label_token_ids"]]
+    labels = encoder.transform(test_df[args.label_col])
     batch_size = args.batch_size or int(config.get("batch_size", 1))
-
     loader = DataLoader(
-        LLMClassificationDataset(test_texts, labels, tokenizer, int(config["max_len"]), str(config["template"]), label_words),
+        LLMClassificationDataset(texts, labels, tokenizer, int(config["max_len"]), str(config["template"]), label_words),
         batch_size=batch_size,
         shuffle=False,
     )
 
     device = get_device(args.device)
-    model = load_model(model_dir, config, tokenizer)
+    model = load_v2_model(model_dir, config, tokenizer)
     if not (config.get("load_in_4bit") or config.get("load_in_8bit")):
         model.to(device)
     model.eval()
@@ -210,12 +256,35 @@ def main() -> int:
 
     label_names = [str(label) for label in encoder.classes_]
     metrics = classification_metrics(y_true, y_pred, label_names)
-    write_metrics(metrics, output_dir / "test_metrics.json")
+    write_predictions(test_df, y_true, y_pred, label_names, Path(args.output_dir), args.encoding)
+    return metrics
 
-    predictions = test_df.copy()
-    predictions["true_label"] = [label_names[idx] for idx in y_true]
-    predictions["pred_label"] = [label_names[idx] for idx in y_pred]
-    predictions.to_csv(output_dir / "predictions.csv", index=False, encoding=args.encoding)
+
+def main() -> int:
+    args = parse_args()
+    model_dir = Path(args.model_dir)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    with (model_dir / "config.json").open("r", encoding="utf-8") as file:
+        config = json.load(file)
+    tokenizer = AutoTokenizer.from_pretrained(model_dir / "tokenizer", trust_remote_code=bool(config.get("trust_remote_code", False)))
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"
+
+    encoder = load_label_encoder(model_dir)
+    test_df = pd.read_csv(args.test_csv, encoding=args.encoding)
+    texts = build_input_texts(test_df, parse_text_columns(args, config))
+    model_type = str(config.get("model_type", ""))
+    if model_type == "llm_sequence_classification":
+        metrics = evaluate_v1(args, model_dir, config, tokenizer, encoder, test_df, texts)
+    elif model_type == "llm_next_token_classifier":
+        metrics = evaluate_v2(args, model_dir, config, tokenizer, encoder, test_df, texts)
+    else:
+        raise ValueError(f"Unknown model_type in config.json: {model_type}")
+
+    write_metrics(metrics, output_dir / "test_metrics.json")
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
     return 0
 

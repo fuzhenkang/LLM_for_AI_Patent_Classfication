@@ -48,15 +48,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train an LLM sequence classifier.")
     parser.add_argument("--model-key", default="qwen", choices=sorted(MODEL_CONFIGS))
     parser.add_argument("--base-model", default=None)
-    parser.add_argument("--data-csv", help="Training CSV for k-fold cross-validation.")
-    parser.add_argument("--train-csv", help="Training CSV for final training.")
-    parser.add_argument("--valid-csv", help="Validation CSV for model selection.")
+    parser.add_argument("--train-csv", required=True, help="Training CSV.")
+    parser.add_argument("--valid-csv", required=True, help="Validation CSV for model selection.")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--text-col", default="text")
     parser.add_argument("--text-cols", default=None, help="Comma-separated input columns, for example: title,abstract,IPC.")
     parser.add_argument("--label-col", default="label")
-    parser.add_argument("--fold-col", default="cv_fold")
-    parser.add_argument("--cv-folds", type=int, default=10)
     parser.add_argument("--encoding", default="utf-8-sig")
     parser.add_argument("--max-len", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
@@ -78,6 +75,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--torch-dtype", default=None, choices=["auto", "float16", "bfloat16", "float32"])
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default=None)
+    parser.add_argument("--verbose", action="store_true", help="Print step and epoch training logs.")
+    parser.add_argument("--save-checkpoint-steps", type=int, default=0, help="Save checkpoint-last every N training steps. Use 0 to disable step checkpoints.")
+    parser.add_argument("--resume-from-checkpoint", default=None, help="Path to a checkpoint directory, for example outputs/v1/qwen_qlora/checkpoint-last.")
     args = parser.parse_args()
     return apply_model_defaults(args)
 
@@ -125,28 +125,6 @@ def read_dataset(path: str, args: argparse.Namespace) -> pd.DataFrame:
     if args.label_col not in df.columns:
         raise ValueError(f"Missing label column: {args.label_col}")
     return df
-
-
-def stratified_folds(labels: pd.Series, n_splits: int, seed: int) -> list[np.ndarray]:
-    rng = np.random.default_rng(seed)
-    folds: list[list[int]] = [[] for _ in range(n_splits)]
-    for _, group_indices in labels.groupby(labels).groups.items():
-        indices = np.array(list(group_indices))
-        rng.shuffle(indices)
-        for idx, row_index in enumerate(indices):
-            folds[idx % n_splits].append(int(row_index))
-    return [np.array(sorted(fold), dtype=np.int64) for fold in folds]
-
-
-def average_metrics(metrics_list: list[dict[str, object]]) -> dict[str, object]:
-    keys = ["accuracy", "precision_macro", "recall_macro", "f1_macro", "loss"]
-    averaged = {
-        key: float(np.mean([float(metrics.get(key, 0.0)) for metrics in metrics_list]))
-        for key in keys
-        if any(key in metrics for metrics in metrics_list)
-    }
-    averaged["fold_metrics"] = metrics_list
-    return averaged
 
 
 def parse_target_modules(value: str) -> list[str]:
@@ -251,11 +229,87 @@ def save_run_artifacts(args: argparse.Namespace, output_dir: Path, tokenizer, en
     config.update(
         {
             "model_type": "llm_sequence_classification",
+            "classifier_version": "v1",
+            "classification_form": "sequence_classification",
             "best_valid_metrics": metrics,
         }
     )
     with (output_dir / "config.json").open("w", encoding="utf-8") as file:
         json.dump(config, file, ensure_ascii=False, indent=2)
+
+
+def save_checkpoint(
+    args: argparse.Namespace,
+    checkpoint_dir: Path,
+    tokenizer,
+    model,
+    optimizer,
+    scheduler,
+    encoder,
+    epoch: int,
+    step: int,
+    global_step: int,
+    best_score: float,
+    best_metrics: dict[str, object],
+) -> None:
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    tokenizer.save_pretrained(checkpoint_dir / "tokenizer")
+    save_label_encoder(encoder, checkpoint_dir)
+    torch.save(trainable_state_dict(model), checkpoint_dir / "trainable_model_state.pt")
+    torch.save(optimizer.state_dict(), checkpoint_dir / "optimizer.pt")
+    torch.save(scheduler.state_dict(), checkpoint_dir / "scheduler.pt")
+    state = {
+        "epoch": epoch,
+        "step": step,
+        "global_step": global_step,
+        "best_score": best_score,
+        "best_metrics": best_metrics,
+    }
+    with (checkpoint_dir / "trainer_state.json").open("w", encoding="utf-8") as file:
+        json.dump(state, file, ensure_ascii=False, indent=2)
+    config = vars(args).copy()
+    config.update(
+        {
+            "checkpoint_type": "training_resume",
+            "model_type": "llm_sequence_classification",
+            "classifier_version": "v1",
+        }
+    )
+    with (checkpoint_dir / "config.json").open("w", encoding="utf-8") as file:
+        json.dump(config, file, ensure_ascii=False, indent=2)
+
+
+def move_optimizer_state_to_device(optimizer, device: torch.device) -> None:
+    for state in optimizer.state.values():
+        for key, value in state.items():
+            if torch.is_tensor(value):
+                state[key] = value.to(device)
+
+
+def load_checkpoint(checkpoint_dir: str | Path, model, optimizer, scheduler, device: torch.device) -> dict[str, object]:
+    checkpoint_path = Path(checkpoint_dir)
+    state_path = checkpoint_path / "trainer_state.json"
+    model_state_path = checkpoint_path / "trainable_model_state.pt"
+    optimizer_path = checkpoint_path / "optimizer.pt"
+    scheduler_path = checkpoint_path / "scheduler.pt"
+    required = [state_path, model_state_path, optimizer_path, scheduler_path]
+    missing = [str(path) for path in required if not path.exists()]
+    if missing:
+        raise FileNotFoundError(f"Missing checkpoint files: {', '.join(missing)}")
+
+    model_state = torch.load(model_state_path, map_location="cpu")
+    model.load_state_dict(model_state, strict=False)
+    optimizer.load_state_dict(torch.load(optimizer_path, map_location="cpu"))
+    move_optimizer_state_to_device(optimizer, device)
+    scheduler.load_state_dict(torch.load(scheduler_path, map_location="cpu"))
+    with state_path.open("r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+def next_checkpoint_position(epoch: int, step: int, steps_per_epoch: int) -> tuple[int, int]:
+    if step >= steps_per_epoch:
+        return epoch + 1, 1
+    return epoch, step + 1
 
 
 def train_once(args: argparse.Namespace, train_df: pd.DataFrame, valid_df: pd.DataFrame, output_dir: Path, seed: int) -> dict[str, object]:
@@ -295,70 +349,87 @@ def train_once(args: argparse.Namespace, train_df: pd.DataFrame, valid_df: pd.Da
 
     best_f1 = -1.0
     best_metrics: dict[str, object] = {}
-    for epoch in range(1, args.epochs + 1):
+    start_epoch = 1
+    start_step = 1
+    global_step = 0
+    if args.resume_from_checkpoint:
+        checkpoint_state = load_checkpoint(args.resume_from_checkpoint, model, optimizer, scheduler, device)
+        start_epoch = int(checkpoint_state.get("epoch", 1))
+        start_step = int(checkpoint_state.get("step", 1))
+        global_step = int(checkpoint_state.get("global_step", 0))
+        best_f1 = float(checkpoint_state.get("best_score", -1.0))
+        best_metrics = dict(checkpoint_state.get("best_metrics", {}))
+        if args.verbose:
+            print(f"resumed from {args.resume_from_checkpoint}: epoch={start_epoch} step={start_step} global_step={global_step}", flush=True)
+
+    checkpoint_last = output_dir / "checkpoint-last"
+    for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         train_losses: list[float] = []
-        for batch in train_loader:
+        for step, batch in enumerate(train_loader, start=1):
+            if epoch == start_epoch and step < start_step:
+                continue
             model_batch = {key: value.to(device) for key, value in batch.items()}
             optimizer.zero_grad()
             loss = model(**model_batch).loss
             loss.backward()
             optimizer.step()
             scheduler.step()
+            global_step += 1
             train_losses.append(float(loss.item()))
+            if args.verbose and (step % 20 == 0 or step == len(train_loader)):
+                print(f"epoch={epoch} step={step}/{len(train_loader)} train_loss={sum(train_losses) / len(train_losses):.4f}", flush=True)
+            if args.save_checkpoint_steps > 0 and global_step % args.save_checkpoint_steps == 0:
+                next_epoch, next_step = next_checkpoint_position(epoch, step, len(train_loader))
+                save_checkpoint(
+                    args,
+                    checkpoint_last,
+                    tokenizer,
+                    model,
+                    optimizer,
+                    scheduler,
+                    encoder,
+                    next_epoch,
+                    next_step,
+                    global_step,
+                    best_f1,
+                    best_metrics,
+                )
 
         metrics = evaluate(model, valid_loader, device, label_names)
         metrics["train_loss"] = float(np.mean(train_losses)) if train_losses else 0.0
         metrics["epoch"] = epoch
         write_metrics(metrics, output_dir / f"valid_metrics_epoch_{epoch}.json")
-        print(f"epoch={epoch} train_loss={metrics['train_loss']:.4f} valid_f1_macro={metrics['f1_macro']:.4f}")
+        if args.verbose:
+            print(f"epoch={epoch} train_loss={metrics['train_loss']:.4f} valid_f1_macro={metrics['f1_macro']:.4f}", flush=True)
         if float(metrics["f1_macro"]) > best_f1:
             best_f1 = float(metrics["f1_macro"])
             best_metrics = metrics
             save_run_artifacts(args, output_dir, tokenizer, encoder, model, metrics)
+        save_checkpoint(
+            args,
+            checkpoint_last,
+            tokenizer,
+            model,
+            optimizer,
+            scheduler,
+            encoder,
+            epoch + 1,
+            1,
+            global_step,
+            best_f1,
+            best_metrics,
+        )
 
     write_metrics(best_metrics, output_dir / "best_valid_metrics.json")
     return best_metrics
 
 
-def cross_validate(args: argparse.Namespace) -> dict[str, object]:
-    data_df = read_dataset(str(args.data_csv), args)
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    if args.fold_col in data_df.columns:
-        fold_ids = sorted(data_df[args.fold_col].dropna().unique().tolist())
-        folds = [data_df.index[data_df[args.fold_col] == fold_id].to_numpy() for fold_id in fold_ids]
-    else:
-        folds = stratified_folds(data_df[args.label_col], args.cv_folds, args.seed)
-
-    fold_metrics: list[dict[str, object]] = []
-    for fold_idx, valid_indices in enumerate(folds):
-        valid_set = set(valid_indices.tolist())
-        train_indices = [idx for idx in data_df.index if idx not in valid_set]
-        train_df = data_df.loc[train_indices].reset_index(drop=True)
-        valid_df = data_df.loc[valid_indices].reset_index(drop=True)
-        print(f"fold={fold_idx + 1}/{len(folds)} train={len(train_df)} valid={len(valid_df)}")
-        metrics = train_once(args, train_df, valid_df, output_dir / f"fold_{fold_idx:02d}", args.seed + fold_idx)
-        fold_metrics.append(metrics)
-
-    cv_metrics = average_metrics(fold_metrics)
-    write_metrics(cv_metrics, output_dir / "cv_metrics.json")
-    with (output_dir / "config.json").open("w", encoding="utf-8") as file:
-        json.dump(vars(args) | {"model_type": "llm_sequence_classification", "cv_folds_actual": len(folds)}, file, ensure_ascii=False, indent=2)
-    return cv_metrics
-
-
 def train(args: argparse.Namespace) -> dict[str, object]:
     args = apply_model_defaults(args)
-    if args.data_csv:
-        return cross_validate(args)
-    if not args.train_csv:
-        raise ValueError("Use --data-csv for k-fold cross-validation, or provide --train-csv.")
     train_df = read_dataset(args.train_csv, args)
-    if args.valid_csv:
-        valid_df = read_dataset(args.valid_csv, args)
-        return train_once(args, train_df, valid_df, Path(args.output_dir), args.seed)
-    return train_once(args, train_df, train_df, Path(args.output_dir), args.seed)
+    valid_df = read_dataset(args.valid_csv, args)
+    return train_once(args, train_df, valid_df, Path(args.output_dir), args.seed)
 
 
 def main() -> int:

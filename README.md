@@ -1,21 +1,29 @@
 # LLM for AI Patent Classification
 
-该仓库提供两套大语言模型专利文本分类程序，均面向“标题、摘要、IPC 等字段判断是否为 AI 专利”的二分类或多分类任务。
+本仓库提供两套基于大语言模型的 AI 专利文本分类程序，均支持使用专利标题、摘要、IPC 等字段判断专利是否属于 AI 专利。
 
 ```text
 LLM_AIPC_v1  基于任务特定分类头的序列分类微调范式
 LLM_AIPC_v2  基于 Prompt 的下一 token 预测生成式分类范式
 ```
 
-安装依赖：
+两套模型共用数据集划分、Optuna 参数寻优和测试集评估脚本：
+
+```text
+split_dataset.py   划分训练集、验证集、测试集
+optuna_search.py   对 v1 或 v2 进行验证集寻优
+evaluate_model.py  自动识别 v1/v2 训练结果并在测试集评估
+```
+
+## 1. 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## 数据格式
+## 2. 数据格式
 
-CSV 至少需要包含标签列和文本输入列。推荐格式：
+CSV 至少需要包含标签列和文本输入列。推荐格式如下：
 
 ```csv
 PN,title,abstract,IPC,AI_label
@@ -23,75 +31,49 @@ CN110000001A,一种图像识别方法,本发明公开了一种基于神经网络
 CN110000002A,一种机械连接装置,本发明涉及机械零件连接结构,F16B,0
 ```
 
-训练时可以使用：
+多字段输入可以写成：
 
 ```bash
 --text-cols title,abstract,IPC
 ```
 
-将多个字段拼接为模型输入。若已经提前拼接为 `text` 列，也可以使用：
+如果已经提前拼接为 `text` 列，也可以写成：
 
 ```bash
 --text-col text
 ```
 
-## 分类范式
+标签列可以是 `0/1`，也可以是文字标签。程序会自动编码标签。
 
-### LLM_AIPC_v1：分类头微调范式
+## 3. 两种分类范式
 
-v1 使用：
+### LLM_AIPC_v1：分类头微调
 
-```python
-AutoModelForSequenceClassification
-```
-
-流程为：
+v1 使用 `AutoModelForSequenceClassification`：
 
 ```text
-文本 → LLM Backbone → 线性分类头 → 类别概率
+文本 -> LLM Backbone -> 线性分类头 -> 类别 logits -> 交叉熵损失
 ```
 
-该范式属于：
+这是常见的 sequence classification fine-tuning，也就是在大语言模型顶部接任务特定分类头进行判别式分类。
+
+### LLM_AIPC_v2：下一 token 分类
+
+v2 使用 `AutoModelForCausalLM`：
 
 ```text
-task-specific classification head fine-tuning
-sequence classification fine-tuning
-判别式序列分类微调
+Prompt + 文本 -> LLM -> 下一 token logits -> 标签词得分 -> 交叉熵损失
 ```
 
-适合希望把大语言模型当作特征编码器，并在顶部接入分类头的实验。
-
-### LLM_AIPC_v2：Prompt 下一 token 分类范式
-
-v2 使用：
-
-```python
-AutoModelForCausalLM
-```
-
-流程为：
-
-```text
-Prompt + 文本 → LLM → 下一个 token logits → 标签词“否/是”
-```
-
-该范式属于：
-
-```text
-prompt-based generative classification
-next-token prediction based classification
-基于提示学习的生成式分类
-```
-
-程序会构造提示词，并只比较标签词 token 的 logits，例如默认：
+这是 prompt-based generative classification。程序会构造提示词，并只比较标签词对应 token 的 logits，例如默认标签词为：
 
 ```text
 否,是
 ```
 
-## 支持模型
+## 4. 支持模型与微调方式
 
-两套程序均通过 `--model-key` 提供默认配置：
+通过 `--model-key` 使用默认配置：
 
 ```text
 llama
@@ -101,7 +83,7 @@ mistral
 baichuan
 ```
 
-也可以用 `--base-model` 指定具体 Hugging Face 模型，例如：
+也可以通过 `--base-model` 指定具体 Hugging Face 模型，例如：
 
 ```text
 Qwen/Qwen3-8B
@@ -111,22 +93,17 @@ baichuan-inc/Baichuan2-7B-Base
 THUDM/glm-4-9b-chat
 ```
 
-## 支持微调方式
-
 v1 和 v2 均支持：
 
 ```text
-lora       # 传统 LoRA
-qlora      # 量化后 LoRA，默认 4bit
-rslora     # rank-stabilized LoRA
-dora       # DoRA
-head_only  # 冻结主干，只训练分类头或输出头参数
+lora       传统 LoRA
+qlora      量化后 LoRA，默认 4bit
+rslora     rank-stabilized LoRA
+dora       DoRA
+head_only  冻结主干，只训练分类头或输出头参数
 ```
 
-v1 的 `head_only` 表示冻结主干，只训练 `classifier/score/classification_head` 等分类头参数。  
-v2 的 `head_only` 表示冻结主干，只训练语言模型输出层中与标签词打分相关的输出头参数。
-
-## 1. 划分数据集
+## 5. 划分数据集
 
 ```bash
 python split_dataset.py \
@@ -147,9 +124,9 @@ data/split/valid.csv
 data/split/test.csv
 ```
 
-## 2. LLM_AIPC_v1 训练与评估
+训练集用于模型微调，验证集用于选择参数和最佳模型，测试集只用于最终评估。
 
-### 2.1 训练分类头范式 QLoRA
+## 6. LLM_AIPC_v1 训练
 
 ```bash
 python LLM_AIPC_v1/llm_classifier.py \
@@ -170,66 +147,32 @@ python LLM_AIPC_v1/llm_classifier.py \
   --batch-size 2 \
   --max-len 256 \
   --epochs 3 \
-  --lr 0.00002
+  --lr 0.00002 \
+  --save-checkpoint-steps 500
 ```
 
-### 2.2 10 折交叉验证
+断点续训：
 
 ```bash
 python LLM_AIPC_v1/llm_classifier.py \
   --model-key qwen \
   --base-model Qwen/Qwen3-8B \
-  --data-csv data/split/train.csv \
-  --output-dir outputs/v1/qwen3_8b_cv \
+  --train-csv data/split/train.csv \
+  --valid-csv data/split/valid.csv \
+  --output-dir outputs/v1/qwen3_8b_qlora \
   --text-cols title,abstract,IPC \
   --label-col AI_label \
-  --cv-folds 10 \
   --tuning-mode qlora \
   --load-in-4bit \
   --batch-size 2 \
   --max-len 256 \
   --epochs 3 \
-  --lr 0.00002
+  --lr 0.00002 \
+  --save-checkpoint-steps 500 \
+  --resume-from-checkpoint outputs/v1/qwen3_8b_qlora/checkpoint-last
 ```
 
-### 2.3 Optuna 参数寻优
-
-```bash
-python LLM_AIPC_v1/optuna_search.py \
-  --model-key qwen \
-  --base-model Qwen/Qwen3-8B \
-  --train-csv data/split/train.csv \
-  --valid-csv data/split/valid.csv \
-  --output-dir outputs/v1/optuna_qwen3_8b \
-  --text-cols title,abstract,IPC \
-  --label-col AI_label \
-  --tuning-mode qlora \
-  --load-in-4bit \
-  --n-trials 10 \
-  --epochs 3
-```
-
-### 2.4 测试集评估
-
-```bash
-python LLM_AIPC_v1/evaluate_model.py \
-  --model-dir outputs/v1/qwen3_8b_qlora \
-  --test-csv data/split/test.csv \
-  --output-dir outputs/evaluation/v1_qwen3_8b_qlora \
-  --text-cols title,abstract,IPC \
-  --label-col AI_label
-```
-
-输出：
-
-```text
-outputs/evaluation/v1_qwen3_8b_qlora/test_metrics.json
-outputs/evaluation/v1_qwen3_8b_qlora/predictions.csv
-```
-
-## 3. LLM_AIPC_v2 训练与评估
-
-### 3.1 训练 Prompt 下一 token QLoRA
+## 7. LLM_AIPC_v2 训练
 
 ```bash
 python LLM_AIPC_v2/llm_classifier.py \
@@ -240,6 +183,7 @@ python LLM_AIPC_v2/llm_classifier.py \
   --output-dir outputs/v2/qwen3_8b_qlora \
   --text-cols title,abstract,IPC \
   --label-col AI_label \
+  --label-words 否,是 \
   --tuning-mode qlora \
   --load-in-4bit \
   --bnb-4bit-quant-type nf4 \
@@ -254,7 +198,7 @@ python LLM_AIPC_v2/llm_classifier.py \
   --save-checkpoint-steps 500
 ```
 
-中断后继续训练：
+断点续训：
 
 ```bash
 python LLM_AIPC_v2/llm_classifier.py \
@@ -265,6 +209,7 @@ python LLM_AIPC_v2/llm_classifier.py \
   --output-dir outputs/v2/qwen3_8b_qlora \
   --text-cols title,abstract,IPC \
   --label-col AI_label \
+  --label-words 否,是 \
   --tuning-mode qlora \
   --load-in-4bit \
   --batch-size 2 \
@@ -275,15 +220,18 @@ python LLM_AIPC_v2/llm_classifier.py \
   --resume-from-checkpoint outputs/v2/qwen3_8b_qlora/checkpoint-last
 ```
 
-### 3.2 Optuna 参数寻优
+## 8. Optuna 参数寻优
+
+v1 寻优：
 
 ```bash
 python optuna_search.py \
+  --classifier-version v1 \
   --model-key qwen \
   --base-model Qwen/Qwen3-8B \
   --train-csv data/split/train.csv \
   --valid-csv data/split/valid.csv \
-  --output-dir outputs/v2/optuna_qwen3_8b \
+  --output-dir outputs/optuna/v1_qwen3_8b \
   --text-cols title,abstract,IPC \
   --label-col AI_label \
   --tuning-mode qlora \
@@ -292,13 +240,55 @@ python optuna_search.py \
   --epochs 3
 ```
 
-### 3.3 测试集评估
+v2 寻优：
+
+```bash
+python optuna_search.py \
+  --classifier-version v2 \
+  --model-key qwen \
+  --base-model Qwen/Qwen3-8B \
+  --train-csv data/split/train.csv \
+  --valid-csv data/split/valid.csv \
+  --output-dir outputs/optuna/v2_qwen3_8b \
+  --text-cols title,abstract,IPC \
+  --label-col AI_label \
+  --label-words 否,是 \
+  --tuning-mode qlora \
+  --load-in-4bit \
+  --n-trials 10 \
+  --epochs 3
+```
+
+输出中会包含：
+
+```text
+best_params.json
+optuna_trials.json
+best_model/
+```
+
+`best_model/` 是验证集指标最优 trial 的模型目录，可直接用于测试集评估。
+
+## 9. 测试集评估
+
+v1 和 v2 共用同一个评估脚本，程序会根据 `model-dir/config.json` 自动识别模型范式。
 
 ```bash
 python evaluate_model.py \
-  --model-dir outputs/v2/qwen3_8b_qlora \
+  --model-dir outputs/v1/qwen3_8b_qlora \
   --test-csv data/split/test.csv \
-  --output-dir outputs/evaluation/v2_qwen3_8b_qlora \
+  --output-dir outputs/evaluation/v1_qwen3_8b_qlora \
+  --text-cols title,abstract,IPC \
+  --label-col AI_label
+```
+
+如果评估 Optuna 找到的最优模型：
+
+```bash
+python evaluate_model.py \
+  --model-dir outputs/optuna/v2_qwen3_8b/best_model \
+  --test-csv data/split/test.csv \
+  --output-dir outputs/evaluation/v2_qwen3_8b_best \
   --text-cols title,abstract,IPC \
   --label-col AI_label
 ```
@@ -306,12 +296,12 @@ python evaluate_model.py \
 输出：
 
 ```text
-outputs/evaluation/v2_qwen3_8b_qlora/test_metrics.json
-outputs/evaluation/v2_qwen3_8b_qlora/predictions.csv
+test_metrics.json
+predictions.csv
 ```
 
-## 4. Baichuan 与 Ministral 说明
+## 10. Baichuan 与 Ministral 说明
 
-Baichuan 的自定义模型代码可能不兼容 `BitsAndBytesConfig` 对象，v2 已对 `--model-key baichuan` 默认启用 legacy bitsandbytes 参数，并默认使用 `--device-map cuda`。
+Baichuan 的自定义模型代码可能不兼容 `BitsAndBytesConfig` 对象。v2 对 `--model-key baichuan` 默认启用 legacy bitsandbytes 参数，并默认使用 `--device-map cuda`，以减少 CPU/GPU 张量不在同一设备的问题。
 
 Ministral 3 / Mistral 3 不是普通 `AutoModelForCausalLM` 架构。v2 在 `--base-model` 包含 `Ministral-3` 或 `Mistral-3` 时会自动使用 `Mistral3ForConditionalGeneration`。
