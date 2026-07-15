@@ -12,8 +12,8 @@ import optuna
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from llm_classifier import apply_model_defaults, train  # noqa: E402
-from llm_registry import MODEL_CONFIGS  # noqa: E402
+from LLM_AIPC_v2.llm_classifier import apply_model_defaults, train  # noqa: E402
+from LLM_AIPC_v2.llm_registry import MODEL_CONFIGS  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

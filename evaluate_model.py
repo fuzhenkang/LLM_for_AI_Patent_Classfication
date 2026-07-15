@@ -14,7 +14,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import classification_metrics, load_label_encoder, write_metrics  # noqa: E402
-from llm_classifier import LLMClassificationDataset, last_token_logits, rebuild_baichuan_rotary_cache  # noqa: E402
+from LLM_AIPC_v2.llm_classifier import LLMClassificationDataset, last_token_logits, rebuild_baichuan_rotary_cache  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

@@ -92,7 +92,7 @@ python split_dataset.py `
 ## 2. 训练 QLoRA 大语言模型分类器
 
 ```powershell
-python llm_classifier.py `
+python LLM_AIPC_v2\llm_classifier.py `
   --model-key qwen `
   --base-model Qwen/Qwen2.5-7B-Instruct `
   --train-csv data\split\train.csv `
@@ -117,7 +117,7 @@ python llm_classifier.py `
 中断后继续训练：
 
 ```powershell
-python llm_classifier.py `
+python LLM_AIPC_v2\llm_classifier.py `
   --model-key qwen `
   --base-model Qwen/Qwen2.5-7B-Instruct `
   --train-csv data\split\train.csv `
