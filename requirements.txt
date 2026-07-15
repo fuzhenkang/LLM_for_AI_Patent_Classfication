@@ -7,3 +7,4 @@ accelerate>=0.28.0
 bitsandbytes>=0.43.0
 optuna>=3.6.0
 mistral-common>=1.8.0
+safetensors>=0.4.0
