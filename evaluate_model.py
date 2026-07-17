@@ -1,4 +1,4 @@
-"""Evaluate LLM_AIPC_v1 or LLM_AIPC_v2 models on a held-out test set."""
+"""Evaluate LLM_AIPC_v1, LLM_AIPC_v2, or LLM_AIPC_v3 models on a held-out test set."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from common import classification_metrics, load_label_encoder, write_metrics  # 
 from LLM_AIPC_v1.llm_classifier import SequenceClassificationDataset  # noqa: E402
 from LLM_AIPC_v1.llm_classifier import dtype_from_name as dtype_from_name_v1  # noqa: E402
 from LLM_AIPC_v2.llm_classifier import LLMClassificationDataset, last_token_logits, rebuild_baichuan_rotary_cache  # noqa: E402
+from LLM_AIPC_v3.llm_classifier import candidate_scores as ar_candidate_scores  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -260,6 +261,44 @@ def evaluate_v2(args: argparse.Namespace, model_dir: Path, config: dict[str, obj
     return metrics
 
 
+def evaluate_v3(args: argparse.Namespace, model_dir: Path, config: dict[str, object], tokenizer, encoder, test_df: pd.DataFrame, texts: pd.Series) -> dict[str, object]:
+    label_words = list(config["label_words"])
+    labels = encoder.transform(test_df[args.label_col])
+    batch_size = args.batch_size or int(config.get("batch_size", 1))
+
+    device = get_device(args.device)
+    model = load_v2_model(model_dir, config, tokenizer)
+    if not (config.get("load_in_4bit") or config.get("load_in_8bit")):
+        model.to(device)
+    model.eval()
+
+    reduction = str(config.get("likelihood_reduction", "mean"))
+    with torch.no_grad():
+        all_scores = [
+            ar_candidate_scores(
+                model,
+                tokenizer,
+                texts,
+                label_word,
+                str(config["template"]),
+                int(config["max_len"]),
+                device,
+                batch_size,
+                reduction,
+            )
+            for label_word in label_words
+        ]
+    score_tensor = torch.tensor(all_scores).transpose(0, 1)
+    y_true = labels.tolist()
+    y_pred = torch.argmax(score_tensor, dim=1).cpu().numpy().tolist()
+    label_names = [str(label) for label in encoder.classes_]
+    true_scores = [float(score_tensor[idx, label]) for idx, label in enumerate(y_true)]
+    metrics = classification_metrics(y_true, y_pred, label_names)
+    metrics["loss"] = float(-sum(true_scores) / max(len(true_scores), 1))
+    write_predictions(test_df, y_true, y_pred, label_names, Path(args.output_dir), args.encoding)
+    return metrics
+
+
 def main() -> int:
     args = parse_args()
     model_dir = Path(args.model_dir)
@@ -281,6 +320,8 @@ def main() -> int:
         metrics = evaluate_v1(args, model_dir, config, tokenizer, encoder, test_df, texts)
     elif model_type == "llm_next_token_classifier":
         metrics = evaluate_v2(args, model_dir, config, tokenizer, encoder, test_df, texts)
+    elif model_type == "llm_ar_classifier":
+        metrics = evaluate_v3(args, model_dir, config, tokenizer, encoder, test_df, texts)
     else:
         raise ValueError(f"Unknown model_type in config.json: {model_type}")
 
