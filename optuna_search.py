@@ -1,4 +1,4 @@
-"""Common Optuna search for LLM_AIPC_v1, LLM_AIPC_v2, and LLM_AIPC_v3."""
+"""Common Optuna search for LLM_AIPC_v1, LLM_AIPC_v2, LLM_AIPC_v3, and LLM_AIPC4."""
 
 from __future__ import annotations
 
@@ -24,9 +24,13 @@ from LLM_AIPC_v3.llm_classifier import DEFAULT_TEMPLATE as V3_DEFAULT_TEMPLATE  
 from LLM_AIPC_v3.llm_classifier import apply_model_defaults as apply_v3_defaults  # noqa: E402
 from LLM_AIPC_v3.llm_classifier import train as train_v3  # noqa: E402
 from LLM_AIPC_v3.llm_registry import MODEL_CONFIGS as V3_MODEL_CONFIGS  # noqa: E402
+from LLM_AIPC4.llm_classifier import DEFAULT_TEMPLATE as V4_DEFAULT_TEMPLATE  # noqa: E402
+from LLM_AIPC4.llm_classifier import apply_model_defaults as apply_v4_defaults  # noqa: E402
+from LLM_AIPC4.llm_classifier import train as train_v4  # noqa: E402
+from LLM_AIPC4.llm_registry import MODEL_CONFIGS as V4_MODEL_CONFIGS  # noqa: E402
 
 
-MODEL_KEYS = sorted(set(V1_MODEL_CONFIGS) | set(V2_MODEL_CONFIGS) | set(V3_MODEL_CONFIGS))
+MODEL_KEYS = sorted(set(V1_MODEL_CONFIGS) | set(V2_MODEL_CONFIGS) | set(V3_MODEL_CONFIGS) | set(V4_MODEL_CONFIGS))
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,8 +38,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--classifier-version",
         default="v2",
-        choices=["v1", "v2", "v3"],
-        help="v1 uses a sequence classification head; v2 uses next-token prediction; v3 uses autoregressive likelihood.",
+        choices=["v1", "v2", "v3", "v4"],
+        help="v1 uses a sequence classification head; v2 uses next-token prediction; v3 uses autoregressive likelihood; v4 uses ar_pseudo LM loss.",
     )
     parser.add_argument("--model-key", default="qwen", choices=MODEL_KEYS)
     parser.add_argument("--base-model", default=None)
@@ -46,8 +50,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--text-cols", default=None, help="Comma-separated input columns, for example: title,abstract,IPC.")
     parser.add_argument("--label-col", default="label")
     parser.add_argument("--encoding", default="utf-8-sig")
-    parser.add_argument("--template", default=None, help="Used by v2 next-token classification and v3 autoregressive likelihood classification.")
-    parser.add_argument("--label-words", default=None, help="Used by v2/v3. Comma-separated verbalizer words ordered by encoded label class.")
+    parser.add_argument("--template", default=None, help="Used by v2/v3/v4 prompt-based classification.")
+    parser.add_argument("--label-words", default=None, help="Used by v2/v3/v4. Comma-separated verbalizer words ordered by encoded label class.")
     parser.add_argument("--likelihood-reduction", default="mean", choices=["mean", "sum"], help="Only used by v3. Aggregate token likelihood by mean or sum.")
     parser.add_argument("--max-len", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
@@ -98,10 +102,21 @@ def apply_defaults(args: argparse.Namespace) -> argparse.Namespace:
         return args
 
     if args.model_key not in V3_MODEL_CONFIGS:
-        raise ValueError(f"model-key {args.model_key} is not supported by LLM_AIPC_v3.")
-    args = apply_v3_defaults(args)
+        if args.classifier_version == "v3":
+            raise ValueError(f"model-key {args.model_key} is not supported by LLM_AIPC_v3.")
+    if args.classifier_version == "v3":
+        args = apply_v3_defaults(args)
+        if args.template is None:
+            args.template = V3_DEFAULT_TEMPLATE
+        if args.label_words is None:
+            args.label_words = "No,Yes"
+        return args
+
+    if args.model_key not in V4_MODEL_CONFIGS:
+        raise ValueError(f"model-key {args.model_key} is not supported by LLM_AIPC4.")
+    args = apply_v4_defaults(args)
     if args.template is None:
-        args.template = V3_DEFAULT_TEMPLATE
+        args.template = V4_DEFAULT_TEMPLATE
     if args.label_words is None:
         args.label_words = "No,Yes"
     return args
@@ -112,7 +127,9 @@ def run_train(args: argparse.Namespace) -> dict[str, object]:
         return train_v1(args)
     if args.classifier_version == "v2":
         return train_v2(args)
-    return train_v3(args)
+    if args.classifier_version == "v3":
+        return train_v3(args)
+    return train_v4(args)
 
 
 def suggest_args(base_args: argparse.Namespace, trial: optuna.Trial) -> argparse.Namespace:

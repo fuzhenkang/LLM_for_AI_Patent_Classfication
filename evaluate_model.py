@@ -1,4 +1,4 @@
-"""Evaluate LLM_AIPC_v1, LLM_AIPC_v2, or LLM_AIPC_v3 models on a held-out test set."""
+"""Evaluate LLM_AIPC_v1, LLM_AIPC_v2, LLM_AIPC_v3, or LLM_AIPC4 models on a held-out test set."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from LLM_AIPC_v1.llm_classifier import SequenceClassificationDataset  # noqa: E4
 from LLM_AIPC_v1.llm_classifier import dtype_from_name as dtype_from_name_v1  # noqa: E402
 from LLM_AIPC_v2.llm_classifier import LLMClassificationDataset, last_token_logits, rebuild_baichuan_rotary_cache  # noqa: E402
 from LLM_AIPC_v3.llm_classifier import candidate_scores as ar_candidate_scores  # noqa: E402
+from LLM_AIPC4.llm_classifier import GPTPseudoClassificationDataset, last_token_logits as pseudo_last_token_logits  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -299,6 +300,49 @@ def evaluate_v3(args: argparse.Namespace, model_dir: Path, config: dict[str, obj
     return metrics
 
 
+def evaluate_v4(args: argparse.Namespace, model_dir: Path, config: dict[str, object], tokenizer, encoder, test_df: pd.DataFrame, texts: pd.Series) -> dict[str, object]:
+    label_words = list(config["label_words"])
+    label_token_ids = [int(item) for item in config["label_token_ids"]]
+    labels = encoder.transform(test_df[args.label_col])
+    batch_size = args.batch_size or int(config.get("batch_size", 1))
+    loader = DataLoader(
+        GPTPseudoClassificationDataset(
+            texts,
+            labels,
+            tokenizer,
+            int(config["max_len"]),
+            str(config["template"]),
+            label_words,
+            label_token_ids,
+            is_train=False,
+        ),
+        batch_size=batch_size,
+        shuffle=False,
+    )
+
+    device = get_device(args.device)
+    model = load_v2_model(model_dir, config, tokenizer)
+    if not (config.get("load_in_4bit") or config.get("load_in_8bit")):
+        model.to(device)
+    model.eval()
+
+    y_true: list[int] = []
+    y_pred: list[int] = []
+    with torch.no_grad():
+        tokenizer.padding_side = "left"
+        for batch in loader:
+            labels_tensor = batch["class_labels"].to(device)
+            model_batch = {key: value.to(device) for key, value in batch.items() if key != "class_labels"}
+            logits = pseudo_last_token_logits(model, model_batch, label_token_ids)
+            y_true.extend(labels_tensor.cpu().numpy().tolist())
+            y_pred.extend(torch.argmax(logits, dim=1).cpu().numpy().tolist())
+
+    label_names = [str(label) for label in encoder.classes_]
+    metrics = classification_metrics(y_true, y_pred, label_names)
+    write_predictions(test_df, y_true, y_pred, label_names, Path(args.output_dir), args.encoding)
+    return metrics
+
+
 def main() -> int:
     args = parse_args()
     model_dir = Path(args.model_dir)
@@ -322,6 +366,8 @@ def main() -> int:
         metrics = evaluate_v2(args, model_dir, config, tokenizer, encoder, test_df, texts)
     elif model_type == "llm_ar_classifier":
         metrics = evaluate_v3(args, model_dir, config, tokenizer, encoder, test_df, texts)
+    elif model_type == "llm_ar_pseudo_classifier":
+        metrics = evaluate_v4(args, model_dir, config, tokenizer, encoder, test_df, texts)
     else:
         raise ValueError(f"Unknown model_type in config.json: {model_type}")
 
