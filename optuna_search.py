@@ -1,4 +1,4 @@
-"""Common Optuna search for LLM_AIPC_v1, LLM_AIPC_v2, LLM_AIPC_v3, and LLM_AIPC4."""
+"""Common Optuna search for LLM_AIPC_v1, LLM_AIPC_v2, LLM_AIPC_v3, and LLM_AIPC_v4."""
 
 from __future__ import annotations
 
@@ -24,10 +24,10 @@ from LLM_AIPC_v3.llm_classifier import DEFAULT_TEMPLATE as V3_DEFAULT_TEMPLATE  
 from LLM_AIPC_v3.llm_classifier import apply_model_defaults as apply_v3_defaults  # noqa: E402
 from LLM_AIPC_v3.llm_classifier import train as train_v3  # noqa: E402
 from LLM_AIPC_v3.llm_registry import MODEL_CONFIGS as V3_MODEL_CONFIGS  # noqa: E402
-from LLM_AIPC4.llm_classifier import DEFAULT_TEMPLATE as V4_DEFAULT_TEMPLATE  # noqa: E402
-from LLM_AIPC4.llm_classifier import apply_model_defaults as apply_v4_defaults  # noqa: E402
-from LLM_AIPC4.llm_classifier import train as train_v4  # noqa: E402
-from LLM_AIPC4.llm_registry import MODEL_CONFIGS as V4_MODEL_CONFIGS  # noqa: E402
+from LLM_AIPC_v4.llm_classifier import DEFAULT_TEMPLATE as V4_DEFAULT_TEMPLATE  # noqa: E402
+from LLM_AIPC_v4.llm_classifier import apply_model_defaults as apply_v4_defaults  # noqa: E402
+from LLM_AIPC_v4.llm_classifier import train as train_v4  # noqa: E402
+from LLM_AIPC_v4.llm_registry import MODEL_CONFIGS as V4_MODEL_CONFIGS  # noqa: E402
 
 
 MODEL_KEYS = sorted(set(V1_MODEL_CONFIGS) | set(V2_MODEL_CONFIGS) | set(V3_MODEL_CONFIGS) | set(V4_MODEL_CONFIGS))
@@ -113,7 +113,7 @@ def apply_defaults(args: argparse.Namespace) -> argparse.Namespace:
         return args
 
     if args.model_key not in V4_MODEL_CONFIGS:
-        raise ValueError(f"model-key {args.model_key} is not supported by LLM_AIPC4.")
+        raise ValueError(f"model-key {args.model_key} is not supported by LLM_AIPC_v4.")
     args = apply_v4_defaults(args)
     if args.template is None:
         args.template = V4_DEFAULT_TEMPLATE

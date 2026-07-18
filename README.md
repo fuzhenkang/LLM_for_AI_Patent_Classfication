@@ -6,7 +6,7 @@
 LLM_AIPC_v1  基于任务特定分类头的判别式序列分类范式
 LLM_AIPC_v2  基于 Prompt 的下一 token 标签词分类范式
 LLM_AIPC_v3  标准 autoregressive likelihood 候选标签似然分类范式
-LLM_AIPC4    与 ar_pseudo/train_gpt.py 一致的 LM-loss 训练 + 标签词 next-token 推理范式
+LLM_AIPC_v4  与 ar_pseudo/train_gpt.py 一致的 LM-loss 训练 + 标签词 next-token 推理范式
 ```
 
 四套模型共用数据集划分、Optuna 参数寻优和测试集评估脚本：
@@ -81,7 +81,7 @@ v3 使用 `AutoModelForCausalLM`，枚举每个候选标签并计算完整候选
 --likelihood-reduction mean
 ```
 
-### LLM_AIPC4：ar_pseudo 风格
+### LLM_AIPC_v4：ar_pseudo 风格
 
 v4 的逻辑与 `amazon-science/Generative-vs-Discriminative-Classifiers` 中的 `ar_pseudo/train_gpt.py` 保持一致：
 
@@ -205,10 +205,10 @@ python LLM_AIPC_v3/llm_classifier.py \
   --save-checkpoint-steps 500
 ```
 
-## 9. LLM_AIPC4 训练
+## 9. LLM_AIPC_v4 训练
 
 ```bash
-python LLM_AIPC4/llm_classifier.py \
+python LLM_AIPC_v4/llm_classifier.py \
   --model-key qwen \
   --base-model Qwen/Qwen3-8B \
   --train-csv data/split/train.csv \

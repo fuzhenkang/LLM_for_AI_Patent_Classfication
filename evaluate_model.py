@@ -1,4 +1,4 @@
-"""Evaluate LLM_AIPC_v1, LLM_AIPC_v2, LLM_AIPC_v3, or LLM_AIPC4 models on a held-out test set."""
+"""Evaluate LLM_AIPC_v1, LLM_AIPC_v2, LLM_AIPC_v3, or LLM_AIPC_v4 models on a held-out test set."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from LLM_AIPC_v1.llm_classifier import SequenceClassificationDataset  # noqa: E4
 from LLM_AIPC_v1.llm_classifier import dtype_from_name as dtype_from_name_v1  # noqa: E402
 from LLM_AIPC_v2.llm_classifier import LLMClassificationDataset, last_token_logits, rebuild_baichuan_rotary_cache  # noqa: E402
 from LLM_AIPC_v3.llm_classifier import candidate_scores as ar_candidate_scores  # noqa: E402
-from LLM_AIPC4.llm_classifier import GPTPseudoClassificationDataset, last_token_logits as pseudo_last_token_logits  # noqa: E402
+from LLM_AIPC_v4.llm_classifier import GPTPseudoClassificationDataset, last_token_logits as pseudo_last_token_logits  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
