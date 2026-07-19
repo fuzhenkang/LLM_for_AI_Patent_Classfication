@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
         "--classifier-version",
         default="v2",
         choices=["v1", "v2", "v3", "v4"],
-        help="v1 uses a sequence classification head; v2 uses next-token prediction; v3 uses autoregressive likelihood; v4 uses ar_pseudo LM loss.",
+        help="v1 uses a sequence classification head; v2 uses next-token prediction; v3 uses autoregressive likelihood; v4 uses standard causal LM SFT.",
     )
     parser.add_argument("--model-key", default="qwen", choices=MODEL_KEYS)
     parser.add_argument("--base-model", default=None)

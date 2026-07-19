@@ -6,7 +6,7 @@
 LLM_AIPC_v1  基于任务特定分类头的判别式序列分类范式
 LLM_AIPC_v2  基于 Prompt 的下一 token 标签词分类范式
 LLM_AIPC_v3  标准 autoregressive likelihood 候选标签似然分类范式
-LLM_AIPC_v4  与 ar_pseudo/train_gpt.py 一致的 LM-loss 训练 + 标签词 next-token 推理范式
+LLM_AIPC_v4  标准 Causal LM SFT 标签生成分类范式
 ```
 
 四套模型共用数据集划分、Optuna 参数寻优和测试集评估脚本：
@@ -81,16 +81,16 @@ v3 使用 `AutoModelForCausalLM`，枚举每个候选标签并计算完整候选
 --likelihood-reduction mean
 ```
 
-### LLM_AIPC_v4：ar_pseudo 风格
+### LLM_AIPC_v4：标准 SFT 标签生成分类
 
-v4 的逻辑与 `amazon-science/Generative-vs-Discriminative-Classifiers` 中的 `ar_pseudo/train_gpt.py` 保持一致：
+v4 将分类任务改写为标准 Causal LM 监督微调任务：
 
 ```text
-训练：Text:专利文本 Label:真实标签词 -> Causal LM 全序列 next-token 交叉熵损失
+训练：Text:专利文本 Label: + 真实标签词 -> 只对真实标签词 token 计算 next-token 交叉熵损失
 推理：Text:专利文本 Label: -> 取最后位置 No/Yes 标签词 logits -> 分类
 ```
 
-因此 v4 的训练损失不是 v2 的“标签词 logits 分类交叉熵”，而是 Hugging Face Causal LM 返回的 `outputs.loss`，即自回归语言模型的 token-level cross entropy loss。
+因此 v4 的训练损失来自 Hugging Face Causal LM 返回的 `outputs.loss`，但 prompt 部分的 labels 被置为 `-100`，不参与损失计算；只有目标标签词 `No/Yes` 参与监督。这比 v2 的“标签词 logits 分类交叉熵”更接近标准 SFT。
 
 ## 4. 支持模型与微调方式
 

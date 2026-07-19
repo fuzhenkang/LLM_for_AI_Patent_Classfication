@@ -18,7 +18,7 @@ from LLM_AIPC_v1.llm_classifier import SequenceClassificationDataset  # noqa: E4
 from LLM_AIPC_v1.llm_classifier import dtype_from_name as dtype_from_name_v1  # noqa: E402
 from LLM_AIPC_v2.llm_classifier import LLMClassificationDataset, last_token_logits, rebuild_baichuan_rotary_cache  # noqa: E402
 from LLM_AIPC_v3.llm_classifier import candidate_scores as ar_candidate_scores  # noqa: E402
-from LLM_AIPC_v4.llm_classifier import GPTPseudoClassificationDataset, last_token_logits as pseudo_last_token_logits  # noqa: E402
+from LLM_AIPC_v4.llm_classifier import SFTClassificationDataset, last_token_logits as sft_last_token_logits  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -306,7 +306,7 @@ def evaluate_v4(args: argparse.Namespace, model_dir: Path, config: dict[str, obj
     labels = encoder.transform(test_df[args.label_col])
     batch_size = args.batch_size or int(config.get("batch_size", 1))
     loader = DataLoader(
-        GPTPseudoClassificationDataset(
+        SFTClassificationDataset(
             texts,
             labels,
             tokenizer,
@@ -333,7 +333,7 @@ def evaluate_v4(args: argparse.Namespace, model_dir: Path, config: dict[str, obj
         for batch in loader:
             labels_tensor = batch["class_labels"].to(device)
             model_batch = {key: value.to(device) for key, value in batch.items() if key != "class_labels"}
-            logits = pseudo_last_token_logits(model, model_batch, label_token_ids)
+            logits = sft_last_token_logits(model, model_batch, label_token_ids)
             y_true.extend(labels_tensor.cpu().numpy().tolist())
             y_pred.extend(torch.argmax(logits, dim=1).cpu().numpy().tolist())
 
@@ -366,7 +366,7 @@ def main() -> int:
         metrics = evaluate_v2(args, model_dir, config, tokenizer, encoder, test_df, texts)
     elif model_type == "llm_ar_classifier":
         metrics = evaluate_v3(args, model_dir, config, tokenizer, encoder, test_df, texts)
-    elif model_type == "llm_ar_pseudo_classifier":
+    elif model_type in {"llm_sft_classifier", "llm_ar_pseudo_classifier"}:
         metrics = evaluate_v4(args, model_dir, config, tokenizer, encoder, test_df, texts)
     else:
         raise ValueError(f"Unknown model_type in config.json: {model_type}")

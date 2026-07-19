@@ -1,4 +1,4 @@
-"""LLM ar_pseudo-style classification with LoRA, QLoRA, rsLoRA, DoRA, or head-only tuning."""
+"""LLM supervised fine-tuning classifier with LoRA, QLoRA, rsLoRA, DoRA, or head-only tuning."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ except ImportError:
 DEFAULT_TEMPLATE = "Text:{text}\nLabel:"
 
 
-class GPTPseudoClassificationDataset(Dataset):
+class SFTClassificationDataset(Dataset):
     def __init__(
         self,
         texts,
@@ -51,23 +51,30 @@ class GPTPseudoClassificationDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         label_idx = int(self.labels[idx])
-        text = self.template.format(text=self.texts[idx], label_words="/".join(self.label_words))
+        prompt = self.template.format(text=self.texts[idx], label_words="/".join(self.label_words))
         if self.is_train:
-            encoded_ids = self.tokenizer.encode(text, truncation=True, max_length=max(self.max_len - 1, 1), add_special_tokens=True)
-            input_ids = encoded_ids + [self.label_token_ids[label_idx]]
+            target_ids = self.tokenizer.encode(self.label_words[label_idx], add_special_tokens=False)
+            if not target_ids:
+                raise ValueError(f"Label word cannot be tokenized: {self.label_words[label_idx]}")
+            prompt_max_len = max(self.max_len - len(target_ids), 1)
+            prompt_ids = self.tokenizer.encode(prompt, truncation=True, max_length=prompt_max_len, add_special_tokens=True)
+            input_ids = prompt_ids + target_ids
             attention_mask = [1] * len(input_ids)
             pad_len = max(self.max_len - len(input_ids), 0)
             input_ids = input_ids + [self.tokenizer.pad_token_id] * pad_len
             attention_mask = attention_mask + [0] * pad_len
             input_ids_tensor = torch.tensor(input_ids[: self.max_len], dtype=torch.long)
             attention_mask_tensor = torch.tensor(attention_mask[: self.max_len], dtype=torch.long)
-            labels = input_ids_tensor.clone()
-            labels[attention_mask_tensor == 0] = -100
+            labels = torch.full_like(input_ids_tensor, -100)
+            target_start = min(len(prompt_ids), self.max_len)
+            target_end = min(target_start + len(target_ids), self.max_len)
+            if target_start < target_end:
+                labels[target_start:target_end] = input_ids_tensor[target_start:target_end]
             item = {"input_ids": input_ids_tensor, "attention_mask": attention_mask_tensor, "labels": labels}
         else:
             self.tokenizer.padding_side = "left"
             encoded = self.tokenizer(
-                text,
+                prompt,
                 truncation=True,
                 padding="max_length",
                 max_length=max(self.max_len - 1, 1),
@@ -79,7 +86,7 @@ class GPTPseudoClassificationDataset(Dataset):
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train an LLM ar_pseudo-style classifier.")
+    parser = argparse.ArgumentParser(description="Train an LLM supervised fine-tuning classifier.")
     parser.add_argument("--model-key", default="qwen", choices=sorted(MODEL_CONFIGS))
     parser.add_argument("--base-model", default=None)
     parser.add_argument("--train-csv", required=True)
@@ -376,7 +383,7 @@ def save_best_model(args: argparse.Namespace, output_dir: Path, tokenizer, model
     config = vars(args).copy()
     config.update(
         {
-            "model_type": "llm_ar_pseudo_classifier",
+            "model_type": "llm_sft_classifier",
             "label_words": label_words,
             "label_token_ids": label_token_ids,
             "best_valid_metrics": metrics,
@@ -425,7 +432,7 @@ def save_checkpoint(
         json.dump(state, file, ensure_ascii=False, indent=2)
     config = vars(args).copy()
     config["checkpoint_type"] = "training_resume"
-    config["model_type"] = "llm_ar_pseudo_classifier"
+    config["model_type"] = "llm_sft_classifier"
     with (checkpoint_dir / "config.json").open("w", encoding="utf-8") as file:
         json.dump(config, file, ensure_ascii=False, indent=2)
 
@@ -488,12 +495,12 @@ def train(args: argparse.Namespace) -> dict[str, object]:
         model.to(device)
 
     train_loader = DataLoader(
-        GPTPseudoClassificationDataset(train_texts, y_train, tokenizer, args.max_len, args.template, label_words, label_token_ids, is_train=True),
+        SFTClassificationDataset(train_texts, y_train, tokenizer, args.max_len, args.template, label_words, label_token_ids, is_train=True),
         batch_size=args.batch_size,
         shuffle=True,
     )
     valid_loader = DataLoader(
-        GPTPseudoClassificationDataset(valid_texts, y_valid, tokenizer, args.max_len, args.template, label_words, label_token_ids, is_train=False),
+        SFTClassificationDataset(valid_texts, y_valid, tokenizer, args.max_len, args.template, label_words, label_token_ids, is_train=False),
         batch_size=args.batch_size,
         shuffle=False,
     )
