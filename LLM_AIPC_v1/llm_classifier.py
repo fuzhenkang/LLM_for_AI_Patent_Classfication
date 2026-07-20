@@ -17,8 +17,10 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer, get_
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import classification_metrics, fit_label_encoder, get_device, save_label_encoder, set_seed, write_metrics  # noqa: E402
 try:
+    from .baichuan_sequence_classification import BaichuanForSequenceClassification  # type: ignore  # noqa: E402
     from .llm_registry import MODEL_CONFIGS, get_llm_config  # type: ignore  # noqa: E402
 except ImportError:
+    from baichuan_sequence_classification import BaichuanForSequenceClassification  # noqa: E402
     from llm_registry import MODEL_CONFIGS, get_llm_config  # noqa: E402
 
 
@@ -144,6 +146,10 @@ def patch_tied_weights_keys(model) -> None:
         model.all_tied_weights_keys = model._tied_weights_keys
 
 
+def is_baichuan_model(args: argparse.Namespace) -> bool:
+    return args.model_key == "baichuan" or "baichuan" in str(args.base_model).lower()
+
+
 def build_model(args: argparse.Namespace, label_names: list[str]):
     id2label = {idx: str(label) for idx, label in enumerate(label_names)}
     label2id = {str(label): idx for idx, label in enumerate(label_names)}
@@ -171,7 +177,10 @@ def build_model(args: argparse.Namespace, label_names: list[str]):
             model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
         model_kwargs["device_map"] = "auto"
 
-    model = AutoModelForSequenceClassification.from_pretrained(args.base_model, **model_kwargs)
+    if is_baichuan_model(args):
+        model = BaichuanForSequenceClassification.from_pretrained(args.base_model, **model_kwargs)
+    else:
+        model = AutoModelForSequenceClassification.from_pretrained(args.base_model, **model_kwargs)
     patch_tied_weights_keys(model)
     if getattr(model.config, "pad_token_id", None) is None and getattr(model.config, "eos_token_id", None) is not None:
         model.config.pad_token_id = model.config.eos_token_id

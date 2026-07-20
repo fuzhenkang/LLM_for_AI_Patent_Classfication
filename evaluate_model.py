@@ -14,6 +14,7 @@ from transformers import AutoModelForCausalLM, AutoModelForSequenceClassificatio
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import classification_metrics, load_label_encoder, write_metrics  # noqa: E402
+from LLM_AIPC_v1.baichuan_sequence_classification import BaichuanForSequenceClassification  # noqa: E402
 from LLM_AIPC_v1.llm_classifier import SequenceClassificationDataset  # noqa: E402
 from LLM_AIPC_v1.llm_classifier import dtype_from_name as dtype_from_name_v1  # noqa: E402
 from LLM_AIPC_v2.llm_classifier import LLMClassificationDataset, last_token_logits, rebuild_baichuan_rotary_cache  # noqa: E402
@@ -143,16 +144,30 @@ def load_v2_model(model_dir: Path, config: dict[str, object], tokenizer):
     return model
 
 
+def is_baichuan_v1_config(config: dict[str, object]) -> bool:
+    return str(config.get("model_key", "")).lower() == "baichuan" or "baichuan" in str(config.get("base_model", "")).lower()
+
+
 def load_v1_model(model_dir: Path, config: dict[str, object], label_names: list[str], tokenizer):
     id2label = {idx: label for idx, label in enumerate(label_names)}
     label2id = {label: idx for idx, label in enumerate(label_names)}
-    model = AutoModelForSequenceClassification.from_pretrained(
-        str(config["base_model"]),
-        num_labels=len(label_names),
-        id2label=id2label,
-        label2id=label2id,
-        **build_quantized_kwargs(config, dtype_from_name_v1),
-    )
+    model_kwargs = build_quantized_kwargs(config, dtype_from_name_v1)
+    if is_baichuan_v1_config(config):
+        model = BaichuanForSequenceClassification.from_pretrained(
+            str(config["base_model"]),
+            num_labels=len(label_names),
+            id2label=id2label,
+            label2id=label2id,
+            **model_kwargs,
+        )
+    else:
+        model = AutoModelForSequenceClassification.from_pretrained(
+            str(config["base_model"]),
+            num_labels=len(label_names),
+            id2label=id2label,
+            label2id=label2id,
+            **model_kwargs,
+        )
     if getattr(model.config, "pad_token_id", None) is None:
         model.config.pad_token_id = tokenizer.pad_token_id
     if config.get("tuning_mode") == "head_only":
