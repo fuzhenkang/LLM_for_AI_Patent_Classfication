@@ -8,6 +8,36 @@ from transformers import AutoModelForCausalLM, PreTrainedModel
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 
+def first_real_tensor_device(model) -> torch.device:
+    for tensor in list(model.parameters()) + list(model.buffers()):
+        if not getattr(tensor, "is_meta", False):
+            return tensor.device
+    return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+
+def rebuild_baichuan_rotary_cache(model, device: torch.device | None = None) -> None:
+    if device is None:
+        device = first_real_tensor_device(model)
+    for module in model.modules():
+        if not all(hasattr(module, name) for name in ("cos_cached", "sin_cached", "max_seq_len_cached")):
+            continue
+        cos_cached = getattr(module, "cos_cached")
+        sin_cached = getattr(module, "sin_cached")
+        if not (getattr(cos_cached, "is_meta", False) or getattr(sin_cached, "is_meta", False)):
+            continue
+
+        seq_len = int(getattr(module, "max_seq_len_cached", 4096))
+        dim = int(cos_cached.shape[-1])
+        base = float(getattr(module, "base", 10000))
+        dtype = torch.float32
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, device=device, dtype=dtype) / dim))
+        positions = torch.arange(seq_len, device=device, dtype=dtype)
+        freqs = torch.einsum("i,j->ij", positions, inv_freq)
+        emb = torch.cat((freqs, freqs), dim=-1)
+        module.inv_freq = inv_freq
+        module.cos_cached = emb.cos()[None, None, :, :]
+        module.sin_cached = emb.sin()[None, None, :, :]
+
 class BaichuanForSequenceClassification(PreTrainedModel):
     """Wrap Baichuan causal LM with a linear sequence-classification head.
 
@@ -38,6 +68,7 @@ class BaichuanForSequenceClassification(PreTrainedModel):
         self.score = nn.Linear(int(hidden_size), num_labels, bias=False)
         device, dtype = self._infer_head_device_dtype()
         self.score.to(device=device, dtype=dtype)
+        rebuild_baichuan_rotary_cache(self.baichuan, device=device)
 
     def _infer_head_device_dtype(self) -> tuple[torch.device, torch.dtype]:
         for parameter in self.baichuan.parameters():
