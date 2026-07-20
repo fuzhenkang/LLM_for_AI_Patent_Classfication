@@ -163,6 +163,8 @@ def build_model(args: argparse.Namespace, label_names: list[str]):
         model_kwargs["torch_dtype"] = dtype_from_name(args.torch_dtype)
     if args.load_in_4bit and args.load_in_8bit:
         raise ValueError("Use only one of --load-in-4bit or --load-in-8bit.")
+    if is_baichuan_model(args) and torch.cuda.is_available():
+        model_kwargs.setdefault("device_map", {"": 0})
     if args.load_in_4bit or args.load_in_8bit:
         if is_baichuan_model(args):
             if args.load_in_4bit:
@@ -365,7 +367,7 @@ def train_once(args: argparse.Namespace, train_df: pd.DataFrame, valid_df: pd.Da
     )
 
     model = build_model(args, label_names)
-    if not (args.load_in_4bit or args.load_in_8bit):
+    if not (args.load_in_4bit or args.load_in_8bit) and not is_baichuan_model(args):
         model.to(device)
     optimizer = torch.optim.AdamW((param for param in model.parameters() if param.requires_grad), lr=args.lr, weight_decay=args.weight_decay)
     updates_per_epoch = max(1, math.ceil(len(train_loader) / args.gradient_steps))
