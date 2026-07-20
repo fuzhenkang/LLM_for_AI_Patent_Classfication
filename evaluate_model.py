@@ -46,7 +46,11 @@ def build_quantized_kwargs(config: dict[str, object], dtype_fn=dtype_from_name) 
     if torch_dtype != "auto":
         kwargs["torch_dtype"] = dtype_fn(torch_dtype)
     if config.get("load_in_4bit") or config.get("load_in_8bit"):
-        if config.get("use_legacy_bnb_args"):
+        use_legacy_bnb = bool(config.get("use_legacy_bnb_args")) or (
+            str(config.get("classifier_version", "")).lower() == "v1"
+            and "baichuan" in str(config.get("base_model", "")).lower()
+        )
+        if use_legacy_bnb:
             kwargs["load_in_4bit"] = bool(config.get("load_in_4bit"))
             kwargs["load_in_8bit"] = bool(config.get("load_in_8bit"))
             if config.get("load_in_4bit"):
@@ -66,7 +70,11 @@ def build_quantized_kwargs(config: dict[str, object], dtype_fn=dtype_from_name) 
             else:
                 kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
         device_map = str(config.get("device_map", "auto"))
-        if device_map == "cuda":
+        if device_map == "cuda" or (
+            str(config.get("classifier_version", "")).lower() == "v1"
+            and "baichuan" in str(config.get("base_model", "")).lower()
+            and torch.cuda.is_available()
+        ):
             kwargs["device_map"] = {"": 0}
         elif device_map == "cpu":
             kwargs["device_map"] = {"": "cpu"}

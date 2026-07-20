@@ -164,19 +164,28 @@ def build_model(args: argparse.Namespace, label_names: list[str]):
     if args.load_in_4bit and args.load_in_8bit:
         raise ValueError("Use only one of --load-in-4bit or --load-in-8bit.")
     if args.load_in_4bit or args.load_in_8bit:
-        from transformers import BitsAndBytesConfig
-
-        if args.load_in_4bit:
-            model_kwargs["quantization_config"] = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type=args.bnb_4bit_quant_type,
-                bnb_4bit_compute_dtype=dtype_from_name(args.bnb_4bit_compute_dtype),
-                bnb_4bit_use_double_quant=args.bnb_4bit_use_double_quant,
-            )
+        if is_baichuan_model(args):
+            if args.load_in_4bit:
+                model_kwargs["load_in_4bit"] = True
+                model_kwargs["bnb_4bit_quant_type"] = args.bnb_4bit_quant_type
+                model_kwargs["bnb_4bit_compute_dtype"] = dtype_from_name(args.bnb_4bit_compute_dtype)
+                model_kwargs["bnb_4bit_use_double_quant"] = args.bnb_4bit_use_double_quant
+            else:
+                model_kwargs["load_in_8bit"] = True
+            model_kwargs["device_map"] = {"": 0} if torch.cuda.is_available() else "auto"
         else:
-            model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
-        model_kwargs["device_map"] = "auto"
+            from transformers import BitsAndBytesConfig
 
+            if args.load_in_4bit:
+                model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type=args.bnb_4bit_quant_type,
+                    bnb_4bit_compute_dtype=dtype_from_name(args.bnb_4bit_compute_dtype),
+                    bnb_4bit_use_double_quant=args.bnb_4bit_use_double_quant,
+                )
+            else:
+                model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+            model_kwargs["device_map"] = "auto"
     if is_baichuan_model(args):
         model = BaichuanForSequenceClassification.from_pretrained(args.base_model, **model_kwargs)
     else:
