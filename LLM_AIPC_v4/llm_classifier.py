@@ -12,7 +12,7 @@ import pandas as pd
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import classification_metrics, fit_label_encoder, get_device, save_label_encoder, set_seed, write_metrics  # noqa: E402
@@ -220,6 +220,18 @@ def is_baichuan_model(args: argparse.Namespace | dict[str, object]) -> bool:
     base_model = args.get("base_model", "") if isinstance(args, dict) else args.base_model
     return model_key == "baichuan" or "baichuan" in str(base_model).lower()
 
+def is_glm_model(args: argparse.Namespace | dict[str, object]) -> bool:
+    model_key = args.get("model_key", "") if isinstance(args, dict) else args.model_key
+    base_model = args.get("base_model", "") if isinstance(args, dict) else args.base_model
+    base_model = str(base_model).lower()
+    return model_key == "glm" or "chatglm" in base_model or "glm" in base_model
+
+
+def build_patched_glm_config(args: argparse.Namespace):
+    config = AutoConfig.from_pretrained(args.base_model, trust_remote_code=args.trust_remote_code)
+    if not hasattr(config, "max_length") and hasattr(config, "seq_length"):
+        config.max_length = config.seq_length
+    return config
 
 def first_real_tensor_device(model) -> torch.device:
     for tensor in list(model.parameters()) + list(model.buffers()):
@@ -257,6 +269,8 @@ def build_model(args: argparse.Namespace, tokenizer):
         raise ValueError("Use only one of --load-in-4bit or --load-in-8bit.")
 
     model_kwargs = {"trust_remote_code": args.trust_remote_code}
+    if is_glm_model(args):
+        model_kwargs["config"] = build_patched_glm_config(args)
     if args.torch_dtype != "auto":
         model_kwargs["torch_dtype"] = dtype_from_name(args.torch_dtype)
 

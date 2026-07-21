@@ -10,7 +10,7 @@ from pathlib import Path
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
-from transformers import AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import classification_metrics, load_label_encoder, write_metrics  # noqa: E402
@@ -84,7 +84,20 @@ def build_quantized_kwargs(config: dict[str, object], dtype_fn=dtype_from_name) 
     return kwargs
 
 
+def is_glm_config(config: dict[str, object]) -> bool:
+    base_model = str(config.get("base_model", "")).lower()
+    return str(config.get("model_key", "")).lower() == "glm" or "chatglm" in base_model or "glm" in base_model
+
+
+def build_patched_glm_config_for_eval(base_model: str, config: dict[str, object]):
+    glm_config = AutoConfig.from_pretrained(base_model, trust_remote_code=bool(config.get("trust_remote_code", False)))
+    if not hasattr(glm_config, "max_length") and hasattr(glm_config, "seq_length"):
+        glm_config.max_length = glm_config.seq_length
+    return glm_config
+
 def load_v2_base_model(base_model: str, config: dict[str, object], **kwargs):
+    if is_glm_config(config):
+        kwargs.setdefault("config", build_patched_glm_config_for_eval(base_model, config))
     if config.get("model_loader") == "mistral3_conditional":
         try:
             from transformers import Mistral3ForConditionalGeneration
