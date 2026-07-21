@@ -310,7 +310,8 @@ predictions.csv
 
 例如 `--batch-size 2 --gradient-steps 4` 等效于每 8 条样本更新一次参数，但单次显存占用仍接近 `batch-size 2`。
 
-## 13. Baichuan 与 Ministral 说明
+## 13. Baichuan 与 GLM 说明
 
 Baichuan 的自定义模型代码可能不兼容 `BitsAndBytesConfig` 对象。程序对 `--model-key baichuan` 默认启用 legacy bitsandbytes 参数，并默认使用 `--device-map cuda`，以减少 CPU/GPU 张量不在同一设备的问题。
+
 glm4-9b模型需要使用transformers==4.48.3的环境。
