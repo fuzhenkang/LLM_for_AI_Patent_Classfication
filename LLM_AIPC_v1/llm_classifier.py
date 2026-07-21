@@ -18,9 +18,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import classification_metrics, fit_label_encoder, get_device, save_label_encoder, set_seed, write_metrics  # noqa: E402
 try:
     from .baichuan_sequence_classification import BaichuanForSequenceClassification  # type: ignore  # noqa: E402
+    from .glm_sequence_classification import GLMForSequenceClassification  # type: ignore  # noqa: E402
     from .llm_registry import MODEL_CONFIGS, get_llm_config  # type: ignore  # noqa: E402
 except ImportError:
     from baichuan_sequence_classification import BaichuanForSequenceClassification  # noqa: E402
+    from glm_sequence_classification import GLMForSequenceClassification  # noqa: E402
     from llm_registry import MODEL_CONFIGS, get_llm_config  # noqa: E402
 
 
@@ -150,6 +152,11 @@ def is_baichuan_model(args: argparse.Namespace) -> bool:
     return args.model_key == "baichuan" or "baichuan" in str(args.base_model).lower()
 
 
+def is_glm_model(args: argparse.Namespace) -> bool:
+    base_model = str(args.base_model).lower()
+    return args.model_key == "glm" or "chatglm" in base_model or "glm" in base_model
+
+
 def build_model(args: argparse.Namespace, label_names: list[str]):
     id2label = {idx: str(label) for idx, label in enumerate(label_names)}
     label2id = {str(label): idx for idx, label in enumerate(label_names)}
@@ -163,7 +170,7 @@ def build_model(args: argparse.Namespace, label_names: list[str]):
         model_kwargs["torch_dtype"] = dtype_from_name(args.torch_dtype)
     if args.load_in_4bit and args.load_in_8bit:
         raise ValueError("Use only one of --load-in-4bit or --load-in-8bit.")
-    if is_baichuan_model(args) and torch.cuda.is_available():
+    if (is_baichuan_model(args) or is_glm_model(args)) and torch.cuda.is_available():
         model_kwargs.setdefault("device_map", {"": 0})
     if args.load_in_4bit or args.load_in_8bit:
         if is_baichuan_model(args):
@@ -187,9 +194,11 @@ def build_model(args: argparse.Namespace, label_names: list[str]):
                 )
             else:
                 model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
-            model_kwargs["device_map"] = "auto"
+            model_kwargs["device_map"] = {"": 0} if is_glm_model(args) and torch.cuda.is_available() else "auto"
     if is_baichuan_model(args):
         model = BaichuanForSequenceClassification.from_pretrained(args.base_model, **model_kwargs)
+    elif is_glm_model(args):
+        model = GLMForSequenceClassification.from_pretrained(args.base_model, **model_kwargs)
     else:
         model = AutoModelForSequenceClassification.from_pretrained(args.base_model, **model_kwargs)
     patch_tied_weights_keys(model)
@@ -367,7 +376,7 @@ def train_once(args: argparse.Namespace, train_df: pd.DataFrame, valid_df: pd.Da
     )
 
     model = build_model(args, label_names)
-    if not (args.load_in_4bit or args.load_in_8bit) and not is_baichuan_model(args):
+    if not (args.load_in_4bit or args.load_in_8bit) and not (is_baichuan_model(args) or is_glm_model(args)):
         model.to(device)
     optimizer = torch.optim.AdamW((param for param in model.parameters() if param.requires_grad), lr=args.lr, weight_decay=args.weight_decay)
     updates_per_epoch = max(1, math.ceil(len(train_loader) / args.gradient_steps))
