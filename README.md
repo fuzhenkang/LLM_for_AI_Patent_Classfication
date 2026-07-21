@@ -3,10 +3,10 @@
 本仓库提供四套基于大语言模型的 AI 专利文本分类程序，均支持使用专利标题、摘要、IPC 等字段判断专利是否属于 AI 专利。
 
 ```text
-LLM_AIPC_v1  基于任务特定分类头的判别式序列分类范式
-LLM_AIPC_v2  基于 Prompt 的下一 token 标签词分类范式
-LLM_AIPC_v3  标准 autoregressive likelihood 候选标签似然分类范式
-LLM_AIPC_v4  标准 Causal LM SFT 标签生成分类范式
+LLM_AIPC_v1  判别式序列分类范式
+LLM_AIPC_v2  候选标签词分类范式
+LLM_AIPC_v3  候选标签似然分类范式
+LLM_AIPC_v4  监督微调标签生成分类范式
 ```
 
 四套模型共用数据集划分、Optuna 参数寻优和测试集评估脚本：
@@ -313,5 +313,4 @@ predictions.csv
 ## 13. Baichuan 与 Ministral 说明
 
 Baichuan 的自定义模型代码可能不兼容 `BitsAndBytesConfig` 对象。程序对 `--model-key baichuan` 默认启用 legacy bitsandbytes 参数，并默认使用 `--device-map cuda`，以减少 CPU/GPU 张量不在同一设备的问题。
-
-Ministral 3 / Mistral 3 不是普通 `AutoModelForCausalLM` 架构。程序在 `--base-model` 包含 `Ministral-3` 或 `Mistral-3` 时会自动使用 `Mistral3ForConditionalGeneration`。
+glm4-9b模型需要使用transformers==4.48.3的环境。
