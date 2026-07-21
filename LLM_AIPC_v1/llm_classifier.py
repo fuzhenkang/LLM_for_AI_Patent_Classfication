@@ -166,6 +166,8 @@ def build_model(args: argparse.Namespace, label_names: list[str]):
         "label2id": label2id,
         "trust_remote_code": args.trust_remote_code,
     }
+    if is_glm_model(args):
+        model_kwargs["attn_implementation"] = "eager"
     if args.torch_dtype != "auto":
         model_kwargs["torch_dtype"] = dtype_from_name(args.torch_dtype)
     if args.load_in_4bit and args.load_in_8bit:

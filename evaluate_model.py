@@ -180,8 +180,10 @@ def load_v1_model(model_dir: Path, config: dict[str, object], label_names: list[
     model_kwargs = build_quantized_kwargs(config, dtype_from_name_v1)
     if is_baichuan_v1_config(config) and torch.cuda.is_available():
         model_kwargs.setdefault("device_map", {"": 0})
-    if is_glm_v1_config(config) and torch.cuda.is_available():
-        model_kwargs["device_map"] = {"": 0}
+    if is_glm_v1_config(config):
+        model_kwargs["attn_implementation"] = "eager"
+        if torch.cuda.is_available():
+            model_kwargs["device_map"] = {"": 0}
     if is_baichuan_v1_config(config):
         model = BaichuanForSequenceClassification.from_pretrained(
             str(config["base_model"]),
