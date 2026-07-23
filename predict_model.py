@@ -20,7 +20,6 @@ from evaluate_model import (  # noqa: E402
     get_device,
     is_baichuan_v1_config,
     is_glm_v1_config,
-    last_token_logits,
     load_v1_model,
     load_v2_model,
     parse_text_columns,
@@ -136,6 +135,16 @@ def append_prediction_columns(df: pd.DataFrame, pred_ids: list[int], pred_labels
     return output
 
 
+def predict_last_token_logits(model, batch: dict[str, torch.Tensor], label_token_ids: list[int]) -> torch.Tensor:
+    outputs = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
+    attention_mask = batch["attention_mask"]
+    positions = torch.arange(attention_mask.size(1), device=attention_mask.device).unsqueeze(0)
+    last_indices = (attention_mask * positions).max(dim=1).values
+    batch_indices = torch.arange(outputs.logits.size(0), device=outputs.logits.device)
+    logits = outputs.logits[batch_indices, last_indices]
+    return logits[:, torch.tensor(label_token_ids, device=logits.device)]
+
+
 def predict_v1(args: argparse.Namespace, model_dir: Path, config: dict[str, object], tokenizer, label_names: list[str], texts: pd.Series):
     batch_size = args.batch_size or int(config.get("batch_size", 1))
     loader = DataLoader(TextOnlyDataset(texts, tokenizer, int(config["max_len"])), batch_size=batch_size, shuffle=False)
@@ -184,7 +193,7 @@ def predict_v2(args: argparse.Namespace, model_dir: Path, config: dict[str, obje
     with torch.no_grad():
         for batch in loader:
             model_batch = {key: value.to(device) for key, value in batch.items()}
-            logits = last_token_logits(model, model_batch, label_token_ids)
+            logits = predict_last_token_logits(model, model_batch, label_token_ids)
             batch_ids, batch_labels, batch_scores = batch_logits_to_predictions(logits, label_names)
             pred_ids.extend(batch_ids)
             pred_labels.extend(batch_labels)
@@ -291,5 +300,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
