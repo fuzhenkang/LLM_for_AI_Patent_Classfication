@@ -300,7 +300,40 @@ test_metrics.json
 predictions.csv
 ```
 
-## 12. 梯度累积
+## 12. 新数据预测
+
+如果是没有标签的新专利数据，不需要使用 `evaluate_model.py`，可以直接使用 `predict_model.py`。程序会根据 `model-dir/config.json` 自动识别 v1/v2/v3/v4 模型范式。
+
+```bash
+python predict_model.py \
+  --model-dir outputs/v4/qwen3_8b_qlora \
+  --input-csv data/new_patents.csv \
+  --output-csv outputs/predictions/new_patents_pred.csv \
+  --text-cols title,abstract,IPC
+```
+
+如果新数据是 TSV，可以指定分隔符：
+
+```bash
+python predict_model.py \
+  --model-dir outputs/v4/qwen3_8b_qlora \
+  --input-csv data/new_patents.tsv \
+  --output-csv outputs/predictions/new_patents_pred.tsv \
+  --text-cols title,abstract,IPC \
+  --sep "\t" \
+  --output-sep "\t"
+```
+
+输出文件会保留原始列，并新增：
+
+```text
+pred_id
+pred_label
+pred_score
+score_<label>
+```
+
+## 13. 梯度累积
 
 `--gradient-steps` 表示梯度累积步数。有效 batch size 的计算方式为：
 
@@ -310,8 +343,9 @@ predictions.csv
 
 例如 `--batch-size 2 --gradient-steps 4` 等效于每 8 条样本更新一次参数，但单次显存占用仍接近 `batch-size 2`。
 
-## 13. Baichuan 与 GLM 说明
+## 14. Baichuan 与 GLM 说明
 
 Baichuan 的自定义模型代码可能不兼容 `BitsAndBytesConfig` 对象。程序对 `--model-key baichuan` 默认启用 legacy bitsandbytes 参数，并默认使用 `--device-map cuda`，以减少 CPU/GPU 张量不在同一设备的问题。
 
 glm4-9b模型需要使用transformers==4.48.3的环境。
+
