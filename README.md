@@ -333,6 +333,21 @@ pred_score
 score_<label>
 ```
 
+大规模数据建议分块预测，并指定稳定唯一标识列用于断点续跑：
+
+```bash
+python predict_model.py \
+  --model-dir outputs/v4/qwen3_8b_qlora \
+  --input-csv data/new_patents.csv \
+  --output-csv outputs/predictions/new_patents_pred.csv \
+  --text-cols title,abstract,IPC \
+  --id-col PN \
+  --chunk-size 10000 \
+  --resume
+```
+
+如果预测中断，重新运行同一条命令即可。程序会读取已有 `output-csv`，跳过已经完成的 `PN`，继续预测剩余样本。如果没有指定 `--id-col`，`--resume` 会按已有输出文件的行数跳过输入文件前 N 行。
+
 ## 13. 梯度累积
 
 `--gradient-steps` 表示梯度累积步数。有效 batch size 的计算方式为：
@@ -348,4 +363,3 @@ score_<label>
 Baichuan 的自定义模型代码可能不兼容 `BitsAndBytesConfig` 对象。程序对 `--model-key baichuan` 默认启用 legacy bitsandbytes 参数，并默认使用 `--device-map cuda`，以减少 CPU/GPU 张量不在同一设备的问题。
 
 glm4-9b模型需要使用transformers==4.48.3的环境。
-
