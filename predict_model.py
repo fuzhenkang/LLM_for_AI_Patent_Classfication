@@ -107,7 +107,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--chunk-size", type=int, default=0, help="Rows to predict and save per chunk. Use 0 to predict all rows at once.")
     parser.add_argument("--resume", action="store_true", help="Resume prediction by skipping rows already written to --output-csv.")
-    parser.add_argument("--id-col", default=None, help="Stable ID column for resume, for example PN. If omitted, resume skips by completed row count.")
+    parser.add_argument("--id-col", default="PN", help="Stable ID column for resume and output. Defaults to PN.")
     parser.add_argument("--device", default=None)
     return parser.parse_args()
 
@@ -128,14 +128,10 @@ def batch_logits_to_predictions(logits: torch.Tensor, label_names: list[str]) ->
     return [int(idx) for idx in pred_ids], pred_labels, probs.numpy().tolist()
 
 
-def append_prediction_columns(df: pd.DataFrame, pred_ids: list[int], pred_labels: list[str], scores: list[list[float]], label_names: list[str]) -> pd.DataFrame:
-    output = df.copy()
-    output["pred_id"] = pred_ids
-    output["pred_label"] = pred_labels
-    output["pred_score"] = [float(max(row)) if row else 0.0 for row in scores]
-    for idx, label in enumerate(label_names):
-        output[f"score_{label}"] = [float(row[idx]) for row in scores]
-    return output
+def append_prediction_columns(df: pd.DataFrame, pred_labels: list[str], id_col: str) -> pd.DataFrame:
+    if id_col not in df.columns:
+        raise ValueError(f"--id-col {id_col} is not present in input data.")
+    return pd.DataFrame({id_col: df[id_col].tolist(), "pred_label": pred_labels})
 
 
 def predict_last_token_logits(model, batch: dict[str, torch.Tensor], label_token_ids: list[int]) -> torch.Tensor:
@@ -146,6 +142,126 @@ def predict_last_token_logits(model, batch: dict[str, torch.Tensor], label_token
     batch_indices = torch.arange(outputs.logits.size(0), device=outputs.logits.device)
     logits = outputs.logits[batch_indices, last_indices]
     return logits[:, torch.tensor(label_token_ids, device=logits.device)]
+
+
+def predict_v1(args: argparse.Namespace, model_dir: Path, config: dict[str, object], tokenizer, label_names: list[str], texts: pd.Series):
+    batch_size = args.batch_size or int(config.get("batch_size", 1))
+    loader = DataLoader(TextOnlyDataset(texts, tokenizer, int(config["max_len"])), batch_size=batch_size, shuffle=False)
+    device = get_device(args.device)
+    model = load_v1_model(model_dir, config, label_names, tokenizer)
+    if not (config.get("load_in_4bit") or config.get("load_in_8bit")) and not (
+        is_baichuan_v1_config(config) or is_glm_v1_config(config)
+    ):
+        model.to(device)
+    model.eval()
+
+    pred_ids: list[int] = []
+    pred_labels: list[str] = []
+    all_scores: list[list[float]] = []
+    with torch.no_grad():
+        for batch in loader:
+            model_batch = {key: value.to(device) for key, value in batch.items()}
+            logits = model(**model_batch).logits
+            batch_ids, batch_labels, batch_scores = batch_logits_to_predictions(logits, label_names)
+            pred_ids.extend(batch_ids)
+            pred_labels.extend(batch_labels)
+            all_scores.extend(batch_scores)
+    return pred_ids, pred_labels, all_scores
+
+
+def predict_v2(args: argparse.Namespace, model_dir: Path, config: dict[str, object], tokenizer, label_names: list[str], texts: pd.Series):
+    label_words = list(config["label_words"])
+    label_token_ids = [int(item) for item in config["label_token_ids"]]
+    batch_size = args.batch_size or int(config.get("batch_size", 1))
+    loader = DataLoader(
+        PromptDataset(texts, tokenizer, int(config["max_len"]), str(config["template"]), label_words),
+        batch_size=batch_size,
+        shuffle=False,
+    )
+    device = get_device(args.device)
+    model = load_v2_model(model_dir, config, tokenizer)
+    if not (config.get("load_in_4bit") or config.get("load_in_8bit")) and not (
+        is_baichuan_v1_config(config) or is_glm_v1_config(config)
+    ):
+        model.to(device)
+    model.eval()
+
+    pred_ids: list[int] = []
+    pred_labels: list[str] = []
+    all_scores: list[list[float]] = []
+    with torch.no_grad():
+        for batch in loader:
+            model_batch = {key: value.to(device) for key, value in batch.items()}
+            logits = predict_last_token_logits(model, model_batch, label_token_ids)
+            batch_ids, batch_labels, batch_scores = batch_logits_to_predictions(logits, label_names)
+            pred_ids.extend(batch_ids)
+            pred_labels.extend(batch_labels)
+            all_scores.extend(batch_scores)
+    return pred_ids, pred_labels, all_scores
+
+
+def predict_v3(args: argparse.Namespace, model_dir: Path, config: dict[str, object], tokenizer, label_names: list[str], texts: pd.Series):
+    label_words = list(config["label_words"])
+    batch_size = args.batch_size or int(config.get("batch_size", 1))
+    device = get_device(args.device)
+    model = load_v2_model(model_dir, config, tokenizer)
+    if not (config.get("load_in_4bit") or config.get("load_in_8bit")) and not (
+        is_baichuan_v1_config(config) or is_glm_v1_config(config)
+    ):
+        model.to(device)
+    model.eval()
+
+    reduction = str(config.get("likelihood_reduction", "mean"))
+    with torch.no_grad():
+        all_scores = [
+            ar_candidate_scores(
+                model,
+                tokenizer,
+                texts,
+                label_word,
+                str(config["template"]),
+                int(config["max_len"]),
+                device,
+                batch_size,
+                reduction,
+            )
+            for label_word in label_words
+        ]
+    score_tensor = torch.tensor(all_scores).transpose(0, 1)
+    return batch_logits_to_predictions(score_tensor, label_names)
+
+
+def predict_v4(args: argparse.Namespace, model_dir: Path, config: dict[str, object], tokenizer, label_names: list[str], texts: pd.Series):
+    label_words = list(config["label_words"])
+    label_token_ids = [int(item) for item in config["label_token_ids"]]
+    batch_size = args.batch_size or int(config.get("batch_size", 1))
+    loader = DataLoader(
+        SFTPromptDataset(texts, tokenizer, int(config["max_len"]), str(config["template"]), label_words),
+        batch_size=batch_size,
+        shuffle=False,
+    )
+    device = get_device(args.device)
+    model = load_v2_model(model_dir, config, tokenizer)
+    if not (config.get("load_in_4bit") or config.get("load_in_8bit")) and not (
+        is_baichuan_v1_config(config) or is_glm_v1_config(config)
+    ):
+        model.to(device)
+    model.eval()
+
+    pred_ids: list[int] = []
+    pred_labels: list[str] = []
+    all_scores: list[list[float]] = []
+    with torch.no_grad():
+        tokenizer.padding_side = "left"
+        for batch in loader:
+            model_batch = {key: value.to(device) for key, value in batch.items()}
+            logits = sft_last_token_logits(model, model_batch, label_token_ids)
+            batch_ids, batch_labels, batch_scores = batch_logits_to_predictions(logits, label_names)
+            pred_ids.extend(batch_ids)
+            pred_labels.extend(batch_labels)
+            all_scores.extend(batch_scores)
+    return pred_ids, pred_labels, all_scores
+
 
 
 def should_move_model_to_device(config: dict[str, object], model_type: str) -> bool:
@@ -287,13 +403,13 @@ def predict_dataframe(
     pred_ids, pred_labels, scores = predict_texts_with_model(
         args, config, tokenizer, label_names, texts, model, device, model_type
     )
-    return append_prediction_columns(input_df, pred_ids, pred_labels, scores, label_names)
+    return append_prediction_columns(input_df, pred_labels, args.id_col)
 
 
 def load_resume_state(args: argparse.Namespace, output_path: Path, output_sep: str) -> tuple[set[str], int]:
     if not args.resume or not output_path.exists():
         return set(), 0
-    done_df = pd.read_csv(output_path, encoding=args.encoding, sep=output_sep, usecols=[args.id_col] if args.id_col else None)
+    done_df = pd.read_csv(output_path, encoding=args.encoding, sep=output_sep, usecols=[args.id_col])
     if args.id_col:
         if args.id_col not in done_df.columns:
             raise ValueError(f"--id-col {args.id_col} is not present in existing output file: {output_path}")
