@@ -324,13 +324,11 @@ python predict_model.py \
   --output-sep "\t"
 ```
 
-输出文件会保留原始列，并新增：
+输出文件只保留专利申请号和预测标签：
 
 ```text
-pred_id
+PN
 pred_label
-pred_score
-score_<label>
 ```
 
 大规模数据建议分块预测，并指定稳定唯一标识列用于断点续跑：
@@ -346,7 +344,7 @@ python predict_model.py \
   --resume
 ```
 
-如果预测中断，重新运行同一条命令即可。程序会读取已有 `output-csv`，跳过已经完成的 `PN`，继续预测剩余样本。如果没有指定 `--id-col`，`--resume` 会按已有输出文件的行数跳过输入文件前 N 行。
+如果预测中断，重新运行同一条命令即可。程序会读取已有 `output-csv`，跳过已经完成的 `PN`，继续预测剩余样本。`--id-col` 默认是 `PN`；如果你的专利号列名不同，可以把它改成对应列名。
 
 ## 13. 梯度累积
 
