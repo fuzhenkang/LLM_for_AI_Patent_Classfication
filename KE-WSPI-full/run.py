@@ -58,7 +58,7 @@ def run(config):
  X=tf.fit_transform([text[i] for i in train]);Xall=tf.transform(text)
  W=weak_labels(df)
  llm=np.zeros(len(df),dtype=np.int64);evidence=np.zeros(len(df))
- verifier=LLMVerifier(config["llm"],config["knowledge"],str(out/"cache"))
+ verifier=LLMVerifier(config["llm"],config["knowledge"],str(out/"cache"),config.get("retrieval",{"mode":"bm25"}))
  groups=pd.factorize(df.cpc.str.slice(0,3))[0]
  # groups remap to zero-index only for training nodes
  unique,gr=np.unique(groups[train],return_inverse=True)
