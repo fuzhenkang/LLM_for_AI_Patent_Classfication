@@ -8,3 +8,6 @@ accelerate>=0.34
 requests>=2.31
 PyYAML>=6
 pytest>=8
+rank-bm25>=0.2.2
+sentence-transformers>=3.0
+faiss-cpu>=1.8
