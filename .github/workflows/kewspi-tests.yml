@@ -26,4 +26,4 @@ jobs:
           python examples/create_demo.py
           python examples/create_teacher_demo.py
           python active_learning.py --data examples/demo.csv --out results/al_demo --initial 20 --batch 10 --rounds 2
-          python distillation.py --data examples/demo.csv --teacher examples/teacher_demo.csv --out results/kd_demo
+          python distillation.py --data examples/demo.csv --teacher examples/teacher_demo.csv --out results/kd_demo\n          python closed_loop.py --data examples/demo.csv --mode oracle --out results/closed_demo --rounds 2 --budget 5 --initial 12
