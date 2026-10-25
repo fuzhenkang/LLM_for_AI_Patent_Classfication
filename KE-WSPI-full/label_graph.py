@@ -28,7 +28,7 @@ class DependentLabelModel(nn.Module):
         for j in range(self.n_sources):
             t=t+u[:,:,j,:].gather(-1,L[:,j,None,None].expand(-1,2,1)).squeeze(-1)
         for k,(a,c) in enumerate(self.pairs):
-            t=t+self.pair[k,:,L[:,a],L[:,c]]
+            t=t+self.pair[k,:,L[:,a],L[:,c]].transpose(0,1)
         return t
     def log_partition(self,device):
         """group and class conditional normalization Z(y,g) via exhaustive 3^m labels."""
