@@ -1,0 +1,6 @@
+[
+ {"id":"k1","title":"AI neural networks","definition":"Neural networks and learned representation models are artificial intelligence methods including deep learning and transformers used for inference and classification.","positive":true},
+ {"id":"k2","title":"Machine learning","definition":"Machine learning uses data-driven fitting to learn a model for prediction, classification, regression or decision making.","positive":true},
+ {"id":"k3","title":"Electrical power transformer","definition":"An electrical transformer changes alternating current voltage by electromagnetic induction; transformer coils alone are not artificial intelligence.","positive":false},
+ {"id":"k4","title":"Background-only mentions","definition":"A patent is not AI-related merely because AI is cited as prior art or a hypothetical future option; inspect operative claims and technical method.","positive":false}
+]

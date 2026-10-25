@@ -1,0 +1,13 @@
+numpy>=1.26
+pandas>=2.1
+scipy>=1.11
+scikit-learn>=1.4
+torch>=2.2
+transformers>=4.44
+accelerate>=0.34
+requests>=2.31
+PyYAML>=6
+pytest>=8
+rank-bm25>=0.2.2
+sentence-transformers>=3.0
+faiss-cpu>=1.8

@@ -1,0 +1,31 @@
+name: KE-WSPI full pipeline
+on:
+  push:
+    paths:
+      - "KE-WSPI-full/**"
+      - ".github/workflows/ke-wspi-full.yml"
+  pull_request:
+    paths:
+      - "KE-WSPI-full/**"
+      - ".github/workflows/ke-wspi-full.yml"
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: KE-WSPI-full
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install CPU PyTorch
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Install other dependencies
+        run: pip install -r requirements.txt
+      - name: Run unit tests
+        run: python -m pytest tests -q
+      - name: Run synthetic integrated pipeline
+        run: |
+          python examples/generate_demo.py
+          python run.py --config example_config.json

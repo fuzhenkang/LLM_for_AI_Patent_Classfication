@@ -1,0 +1,45 @@
+{
+  "data": "examples/patents.csv",
+  "knowledge": "examples/knowledge.json",
+  "output": "outputs/demo",
+  "seed": 42,
+  "llm": {
+    "enabled": false,
+    "base_url": "https://api.openai.com/v1",
+    "model": "YOUR_MODEL_NAME",
+    "api_key_env": "OPENAI_API_KEY",
+    "timeout": 90,
+    "max_calls_per_round": 12
+  },
+  "student": {
+    "model_name": "allenai/scibert_scivocab_uncased",
+    "epochs": 1,
+    "batch_size": 8,
+    "learning_rate": 0.00002,
+    "max_length": 256,
+    "temperature": 2
+  },
+  "loop": {
+    "rounds": 2,
+    "query_budget": 8,
+    "initial_gold": 16,
+    "auto_oracle": true
+  },
+  "label_model": {
+    "epochs": 120,
+    "learning_rate": 0.025,
+    "pair_l2": 0.2
+  },
+  "retrieval": {
+    "mode": "hybrid",
+    "embedding_model": "BAAI/bge-small-en-v1.5",
+    "index_dir": "cache/rag_index",
+    "top_k": 4,
+    "recall_k": 12,
+    "rrf_k": 60,
+    "reranker": {
+      "enabled": false,
+      "model": "BAAI/bge-reranker-base"
+    }
+  }
+}

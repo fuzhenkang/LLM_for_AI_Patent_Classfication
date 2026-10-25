@@ -1,0 +1,9 @@
+.env
+__pycache__/
+.pytest_cache/
+*.pyc
+outputs/
+cache/
+checkpoints/
+data/private/
+*.safetensors

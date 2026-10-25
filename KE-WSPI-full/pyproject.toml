@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "ke-wspi"
+version = "0.1.0"
+description = "Knowledge-Enhanced Weakly Supervised Patent Identification"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.26","pandas>=2.1","scipy>=1.11","scikit-learn>=1.4","torch>=2.2","transformers>=4.44","requests>=2.31"]
+[tool.setuptools]
+py-modules = ["kewspi_full"]
