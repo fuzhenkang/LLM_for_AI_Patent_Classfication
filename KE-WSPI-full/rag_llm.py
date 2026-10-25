@@ -40,8 +40,10 @@ def quote_supported(quote,source):
     return bool(quote) and norm(quote) in norm(source)
 
 class LLMVerifier:
-    def __init__(self,config,knowledge_path,cache_dir="cache/llm"):
-        self.cfg=config;self.rag=KnowledgeRetriever(knowledge_path)
+    def __init__(self,config,knowledge_path,cache_dir="cache/llm",retrieval_config=None):
+        self.cfg=config
+        from hybrid_retrieval import HybridKnowledgeRetriever
+        self.rag=HybridKnowledgeRetriever(knowledge_path,retrieval_config or {"mode":"bm25"})
         self.path=Path(cache_dir);self.path.mkdir(parents=True,exist_ok=True)
     def verify(self,patent):
         pid=str(patent["patent_id"]);text=patent_text(patent)
