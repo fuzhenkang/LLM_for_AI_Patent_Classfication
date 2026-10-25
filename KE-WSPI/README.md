@@ -162,3 +162,15 @@ python distillation.py --data examples/demo.csv --teacher examples/teacher_demo.
 ```
 
 **务必区分**：已实现的是离线主动学习实验和概率软标签蒸馏基线。尚未实现真实专家/LLM在线反馈后自动重估ECLR的完整闭环，也未实现PatentBERT/SciBERT的神经知识蒸馏。示例教师概率由合成数据的真实标签构造，只允许用来验证程序运行，不得作为论文实验数据。
+
+
+## 11. V3 ECLR—主动复核—学生训练闭环
+
+新增 [closed_loop.py](closed_loop.py)，实现同轮 ECLR 标签融合、主动选样、人工反馈或离线 Oracle、专家标签锚定回写及重新训练学生模型的循环。使用流程、输出、实验边界详见 [README_V3.md](README_V3.md)。
+
+```bash
+python examples/create_demo.py
+python closed_loop.py --data examples/demo.csv --mode oracle --out results/closed_demo --rounds 3 --budget 10
+```
+
+这是一套**离线可执行的完整流程原型**，并非已部署的RAG自动标注服务，也不是完整神经蒸馏实现。真实人工反馈通过复核CSV传入；测试数据被隔离；Spy严格复现和证据蕴含核验仍需扩展。
