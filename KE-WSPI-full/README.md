@@ -159,3 +159,10 @@ UTF-8 CSV字段：
 ## 参考文献
 
 Wu, T., Min, C., Ding, W. W., Wang, G., & Zhang, K. (2026). *Data and methods for identifying artificial intelligence-related patents*. Research Policy, 55, 105599. https://doi.org/10.1016/j.respol.2026.105599
+
+
+## 11. 可配置混合知识检索（RAG更新）
+
+RAG已新增 `hybrid_retrieval.py`：BM25、SentenceTransformers Embedding + FAISS、混合RRF及可选Cross-Encoder Reranker；索引使用知识内容哈希持久化。项目配置增加顶层 `retrieval.mode`（`bm25`/`dense`/`hybrid`）及模型、候选数、缓存目录。**详细步骤与消融设计参见 [README_RAG.md](README_RAG.md)**。
+
+注意：默认示例配置的 `hybrid` 模式首次运行需下载Embedding模型；离线环境可临时设为 `bm25`。当前检索结果仍需外部LLM API完成核验，不应将相似度直接视为标签置信度。
