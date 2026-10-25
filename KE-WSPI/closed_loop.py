@@ -26,14 +26,14 @@ def run_loop(df,out,mode="oracle",reviews=None,rounds=4,budget=10,seed=42,
     if "label" not in df:df["label"]=np.nan
     y=pd.to_numeric(df.label,errors="coerce").to_numpy()
     known=np.flatnonzero(np.isfinite(y))
-    if len(known)<24 or set(np.unique(y[known]))!={0.,1.}:raise ValueError("need >=24 expert gold labels of both classes")
+    if len(known)<24 or set(np.unique(y[known]))!={0.,1.}:raise ValueError("need >=24 expert gold labels of both classes")\n    if mode=="oracle" and len(known)!=len(df):raise ValueError("oracle mode requires expert labels for every patent; use review for real unlabeled data")
     pool,hold=train_test_split(known,test_size=.4,stratify=y[known],random_state=seed)
     dev,test=train_test_split(hold,test_size=.5,stratify=y[hold],random_state=seed)
     rng=np.random.default_rng(seed)
     c0=pool[y[pool]==0];c1=pool[y[pool]==1]
     k0=max(2,initial//2);k1=max(2,initial-k0)
     if len(c0)<k0 or len(c1)<k1:raise ValueError("not enough pool examples for initial")
-    anchors=set(np.r_[rng.choice(c0,k0,replace=False),rng.choice(c1,k1,replace=False)].tolist())
+    anchors=set(np.r_[rng.choice(c0,k0,replace=False),rng.choice(c1,k1,replace=False)].tolist())\n    initial_anchor_ids=sorted(anchors)
     # In real review mode, labels from CSV are additional human checks; never overwrite held-out gold
     review_map={}
     if reviews:
@@ -97,7 +97,7 @@ def run_loop(df,out,mode="oracle",reviews=None,rounds=4,budget=10,seed=42,
         pd.DataFrame({"patent_id":df.patent_id,"student_probability":probs}).to_csv(out/f"student_round_{step}.csv",index=False)
     pd.DataFrame(metrics).to_csv(out/"closed_loop_metrics.csv",index=False)
     (out/"split_ids.json").write_text(json.dumps(
-      {"initial_anchors":df.iloc[sorted(set(pool)-set(anchors))].patent_id.tolist(),
+      {"initial_anchors":df.iloc[initial_anchor_ids].patent_id.tolist(),
        "dev":df.iloc[dev].patent_id.tolist(),"test":df.iloc[test].patent_id.tolist(),
        "pending_review":sorted(set(pending)-{str(df.iloc[i].patent_id) for i in anchors})},
        ensure_ascii=False,indent=2),encoding="utf-8")
