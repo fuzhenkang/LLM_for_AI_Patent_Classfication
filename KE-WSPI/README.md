@@ -7,7 +7,7 @@
 > **版本与限制（请先阅读）**
 >
 > - 已实现：规则标签函数、原文证据引用匹配、条件化来源可靠性近似估计、EM后验软标签、来源折叠以减轻重复计票、Spy启发式对照、统一学生分类器与消融评估。
-> - 未实现：完整稀疏图概率依赖势函数、RAG自动检索、真实LLM API请求、主动学习循环、知识蒸馏、PatentBERT/SciBERT微调、全文技术证据语义蕴含验证、原文Spy方法严格复现。这些不能在论文中声称已完成。
+> - 未实现：完整稀疏图概率依赖势函数、RAG自动检索、真实LLM API请求、在线主动学习回写ECLR、神经网络知识蒸馏、PatentBERT/SciBERT微调、全文技术证据语义蕴含验证、原文Spy方法严格复现。这些不能在论文中声称已完成。
 > - **仅为可扩展的实验脚手架**：没有真实标注数据时，运行成功不代表性能更优。演示数据不能用于科研结论。
 
 ## 1. 目录
@@ -15,6 +15,9 @@
 ```text
 KE-WSPI/
 ├── kewspi.py                 # 弱标注、证据读取、ECLR概率融合、Spy近似对照和实验
+├── active_learning.py         # 主动学习策略、离线学习曲线和人工复核队列
+├── distillation.py            # 教师概率软标签与轻量学生蒸馏消融
+├── README_V2.md               # V2详细中文运行说明
 ├── requirements.txt
 ├── examples/create_demo.py  # 人工合成烟雾测试数据
 ├── tests/test_core.py        # 基础测试
@@ -143,3 +146,19 @@ Wu, T., Min, C., Ding, W. W., Wang, G., & Zhang, K. (2026). *Data and methods fo
 ### 关于研究结果
 
 此仓库不附带任何真实专利精度结果。所有报告须注明实际数据源、分类定义、抽样协议、参数、专家标签及实验版本。请勿上传包含私有专利数据或API密钥的文件。
+
+
+## 10. V2 新增：主动学习与软标签蒸馏
+
+**新增的两个实验脚本**已经上传到相同分支，详情参见 [README_V2.md](README_V2.md)。主动学习提供随机、熵、不一致性和混合采样，支持离线专家真值模拟及导出复核队列；蒸馏使用外部教师概率和专家锚点训练TF-IDF+LogisticRegression轻量学生，并提供四种监督/蒸馏变体。
+
+快速体验：
+
+```bash
+python examples/create_demo.py
+python examples/create_teacher_demo.py
+python active_learning.py --data examples/demo.csv --out results/al_demo
+python distillation.py --data examples/demo.csv --teacher examples/teacher_demo.csv --out results/kd_demo
+```
+
+**务必区分**：已实现的是离线主动学习实验和概率软标签蒸馏基线。尚未实现真实专家/LLM在线反馈后自动重估ECLR的完整闭环，也未实现PatentBERT/SciBERT的神经知识蒸馏。示例教师概率由合成数据的真实标签构造，只允许用来验证程序运行，不得作为论文实验数据。
