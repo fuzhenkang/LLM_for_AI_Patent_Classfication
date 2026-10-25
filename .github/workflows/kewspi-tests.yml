@@ -1,0 +1,29 @@
+name: KE-WSPI Python tests
+on:
+  pull_request:
+    paths:
+      - "KE-WSPI/**"
+  push:
+    paths:
+      - "KE-WSPI/**"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        working-directory: KE-WSPI
+        run: python -m pip install -r requirements.txt
+      - name: Run tests
+        working-directory: KE-WSPI
+        run: python -m pytest -q
+      - name: Run synthetic demonstration
+        working-directory: KE-WSPI
+        run: |
+          python examples/create_demo.py
+          python examples/create_teacher_demo.py
+          python active_learning.py --data examples/demo.csv --out results/al_demo --initial 20 --batch 10 --rounds 2
+          python distillation.py --data examples/demo.csv --teacher examples/teacher_demo.csv --out results/kd_demo\n          python closed_loop.py --data examples/demo.csv --mode oracle --out results/closed_demo --rounds 2 --budget 5 --initial 12
